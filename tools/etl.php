@@ -141,6 +141,7 @@ $rec = static function (string $col) use (&$report, &$order): array {
     return [];
 };
 $materialIssues = [];        // Melih'e: malzeme kod yerine aciklama tasiyan istekler
+$multiReceiptIssues = [];    // Giris kalite: birden fazla satinalma girisi olan kayitlar (yalniz ilki baglanir)
 $stoppedAt      = null;      // koleksiyon patlarsa
 
 // Kayit atlama sinyali (beklenen: eksik FK). Koleksiyon transaction'ini BOZMAZ.
@@ -689,19 +690,44 @@ $runCollection('first_off_records', $D['firstOffKayitlari'] ?? [], function (arr
         'sample_count'    => $int($r['numuneAdedi'] ?? null),
         'check_time'      => $str($r['kontrolSaati'] ?? null),
         'overall_result'  => $str($r['genelKarar'] ?? null),
+        'note'            => $str($r['not'] ?? null), // kaynak alan: 'not'
     ]);
     $recordId = $res['id'];
 
-    // olcumler: {noktaLegacyId: {deger, sonuc}} -> [{point_id, value, result}]
+    // Olcum satirlari: iki bicim var.
+    //   YENI (cok numuneli): degerler: {noktaLegacyId: [v1, v2, ... vN]} — her deger bir
+    //     satir, sequence dizideki sira (0'dan). Deger donusumu incoming_inspections ile
+    //     ayni: sayisal -> value, metin (Uygun/Uygun Degil) -> result, bos/null -> ikisi
+    //     de null (numune sirasi korunsun diye satir yine yazilir).
+    //   ESKI (tek numune): olcumler: {noktaLegacyId: {deger, sonuc}} — sequence 0.
+    // degerler varsa oncelikli; ikisi birden olan kayit yok.
     $measurements = [];
-    foreach (($r['olcumler'] ?? []) as $ptLegacy => $m) {
-        $pointId = $idMap['first_off_points'][$ptLegacy] ?? null;
-        if ($pointId === null) continue; // nokta yoksa olcum atlanir
-        $measurements[$pointId] = [
-            'point_id' => $pointId,
-            'value'    => $num($m['deger'] ?? null),
-            'result'   => $str($m['sonuc'] ?? null),
-        ];
+    if (isset($r['degerler']) && is_array($r['degerler']) && $r['degerler'] !== []) {
+        foreach ($r['degerler'] as $ptLegacy => $vals) {
+            $pointId = $idMap['first_off_points'][$ptLegacy] ?? null;
+            if ($pointId === null || !is_array($vals)) continue; // nokta yoksa atla
+            $seq = 0;
+            foreach ($vals as $v) {
+                if ($v === null || (is_string($v) && trim($v) === '')) {
+                    $measurements[] = ['point_id' => $pointId, 'sequence' => $seq++, 'value' => null, 'result' => null];
+                } elseif (is_numeric($v)) {
+                    $measurements[] = ['point_id' => $pointId, 'sequence' => $seq++, 'value' => (float) $v, 'result' => null];
+                } else {
+                    $measurements[] = ['point_id' => $pointId, 'sequence' => $seq++, 'value' => null, 'result' => trim((string) $v)];
+                }
+            }
+        }
+    } else {
+        foreach (($r['olcumler'] ?? []) as $ptLegacy => $m) {
+            $pointId = $idMap['first_off_points'][$ptLegacy] ?? null;
+            if ($pointId === null) continue; // nokta yoksa olcum atlanir
+            $measurements[] = [
+                'point_id' => $pointId,
+                'sequence' => 0,
+                'value'    => $num($m['deger'] ?? null),
+                'result'   => $str($m['sonuc'] ?? null),
+            ];
+        }
     }
     // gerekce: string dizisi
     $reasons = [];
@@ -709,7 +735,7 @@ $runCollection('first_off_records', $D['firstOffKayitlari'] ?? [], function (arr
         $s = $str($g);
         if ($s !== null && !in_array($s, $reasons, true)) $reasons[] = $s;
     }
-    $repo['first_off_records']->updateWithChildren($recordId, [], array_values($measurements), $reasons, null);
+    $repo['first_off_records']->updateWithChildren($recordId, [], $measurements, $reasons, null);
     return $res['action'];
 });
 
@@ -817,9 +843,25 @@ $runCollection('purchase_receipts', $D['satinalmaGirisleri'] ?? [], function (ar
 
 if ($stoppedAt === null)
 $runCollection('incoming_inspections', $D['girisKaliteKontrolleri'] ?? [], function (array $r)
-        use ($repo, &$idMap, &$ref, $str, $num, $int): string {
+        use ($repo, &$idMap, &$ref, &$multiReceiptIssues, $str, $num, $int): string {
+    // satinalmaGirisId (tekil) cogunlukla bos; gercek bag satinalmaGirisIdleri (liste)
+    // alaninda. Tekil bossa listenin ILK elemani alinir; sema tek bag tutar.
     $receiptLegacy = $str($r['satinalmaGirisId'] ?? null);
     $matCode = $str($r['malzeme'] ?? null);
+    if ($receiptLegacy === null) {
+        $list = $r['satinalmaGirisIdleri'] ?? [];
+        if (is_array($list) && $list !== []) {
+            $receiptLegacy = $str($list[0] ?? null);
+            if (count($list) > 1) {
+                // Coklu bag: yalniz ilki baglanir, kalanlar duser. Ayri karar; burada uyari.
+                $multiReceiptIssues[] = [
+                    'malzeme' => $matCode ?? '(kod yok)',
+                    'tarih'   => $str($r['kontrolTarihi'] ?? null) ?? '(tarih yok)',
+                    'dropped' => count($list) - 1,
+                ];
+            }
+        }
+    }
     $res = $repo['incoming_inspections']->etlUpsert($str($r['id'] ?? null), [
         // legacy referans korunur (eslesmese de); yeni FK varsa cozulur.
         'legacy_purchase_receipt_id' => $receiptLegacy,
@@ -989,6 +1031,15 @@ if ($materialIssues !== []) {
     }
 }
 
+// Giris kalite — coklu satinalma girisi bagi (yalniz ilki baglandi).
+echo "\nGiris kalite — coklu satinalma girisi olan kayit: " . count($multiReceiptIssues) . " kayit"
+    . ($multiReceiptIssues === [] ? " (hepsinde tek bag)\n" : " (yalniz ILK bag kuruldu; kalanlar ayri karar)\n");
+if ($multiReceiptIssues !== []) {
+    foreach ($multiReceiptIssues as $m) {
+        echo "  {$m['malzeme']} / {$m['tarih']}: {$m['dropped']} bag dustu\n";
+    }
+}
+
 // Durus nedeni tohum temizligi + production durus nedeni cozumleme ozeti.
 echo "\nDurus nedeni tohumlari (migration 035): {$downtimeSeedCleanup['deleted']} silindi"
     . ($downtimeSeedCleanup['kept'] ? ", {$downtimeSeedCleanup['kept']} korundu (uretim kaydinca kullaniliyor)" : "") . "\n";
@@ -998,6 +1049,98 @@ if ($reasonIssues !== []) {
     arsort($reasonIssues);
     foreach ($reasonIssues as $name => $n) echo "  ($n) $name\n";
 }
+
+// =========================================================================
+// SILINEN KAYIT DENETIMI (salt okuma; yazma/silme YOK) — brief bolum 3
+// Her tablo icin iki sayi: (a) DB'de legacy_id dolu ama yedekte yok = v1'de
+// silinmis; (b) legacy_id NULL = v2'de dogrudan acilmis. (b) referans/oto tablolar
+// disinda 0 beklenir; 0 degilse asagida ISARETLENIR (silme ayri karar).
+// Not: dry-run'da bile guncel DB durumunu okur (dis transaction geri alinmistir).
+$auditSpec = [
+    'product_codes'        => 'kodTanimlari',
+    'work_centers'         => 'isMerkezleri',
+    'operations'           => 'operasyonlarListesi',
+    'task_people'          => 'gorevKisiler',
+    'terms'                => 'terimCevirileri',
+    'operators'            => 'operatorler',
+    'product_trees'        => 'urunAgaclari',
+    'routes'               => 'routes',
+    'capacities'           => 'capacity',
+    'tasks'                => 'gorevler',
+    'orders'               => 'orders',
+    'work_orders'          => 'workorders',
+    'downtime_reasons'     => 'durusNedenleri',
+    'production'           => 'production',
+    'machine_plans'        => 'makinePlani',
+    'first_off_points'     => 'firstOffNoktalari',
+    'first_off_records'    => 'firstOffKayitlari',
+    'hourly_points'        => 'saatlikNoktalari',
+    'hourly_records'       => 'saatlikKayitlari',
+    'purchase_requests'    => 'satinalmaIstekleri',
+    'purchase_receipts'    => 'satinalmaGirisleri',
+    'incoming_inspections' => 'girisKaliteKontrolleri',
+    'control_plans'        => 'kontrolPlani',
+    'quality_measurements' => 'kaliteOlcumleri',
+    'sites'                => 'sites',
+];
+// Referans / oto-olusturulan tablolar: NULL legacy beklenir, isaretlenmez.
+$refTables = ['work_centers' => true, 'operations' => true, 'task_people' => true,
+    'terms' => true, 'downtime_reasons' => true];
+
+echo "\n============================================================\n";
+echo " SILINEN KAYIT DENETIMI (salt okuma — silme yok)\n";
+echo "============================================================\n";
+printf("%-22s %14s %14s\n", 'Tablo', 'YedekteSilinmis', 'v2Dogrudan');
+echo str_repeat('-', 52) . "\n";
+$nullFlagged = [];
+foreach ($auditSpec as $col => $srcKey) {
+    // yedekteki legacy id kumesi
+    $backupIds = [];
+    foreach (($D[$srcKey] ?? []) as $rec0) {
+        $id0 = $rec0['id'] ?? null;
+        if ($id0 !== null && $id0 !== '') $backupIds[(string) $id0] = true;
+    }
+    try {
+        $a = $repo[$col]->etlLegacyAudit($backupIds);
+    } catch (\Throwable $e) {
+        printf("%-22s %14s %14s\n", $col, 'HATA', preg_replace('/\s+/', ' ', $e->getMessage()));
+        continue;
+    }
+    $delN = count($a['deletedInBackup']);
+    printf("%-22s %14d %14d\n", $col, $delN, $a['nullLegacy']);
+    if ($delN > 0) {
+        $first10 = array_slice($a['deletedInBackup'], 0, 10);
+        echo "    yedekte silinmis id (ilk 10): " . implode(', ', $first10) . "\n";
+    }
+    if ($a['nullLegacy'] > 0 && !isset($refTables[$col])) {
+        $nullFlagged[$col] = $a['nullLegacy'];
+    }
+}
+echo str_repeat('-', 52) . "\n";
+if ($nullFlagged !== []) {
+    echo "\n!!! DIKKAT — referans disi tablolarda legacy_id NULL kayit var (0 bekleniyordu):\n";
+    foreach ($nullFlagged as $col => $n) echo "    $col: $n kayit v2'de dogrudan acilmis\n";
+    echo "    Bunlar yeni yedege yansimaz; silme/uzlastirma ayri karar (brief bolum 3).\n";
+} else {
+    echo "Referans disi tablolarda v2-dogrudan (NULL legacy) kayit yok.\n";
+}
+
+// =========================================================================
+// ESLENMEYEN ALANLAR (brief "Dokunma") — spesifikasyonda karsiligi olmayan,
+// bilerek eslenmeyen kaynak alanlari. Salt bilgi.
+// =========================================================================
+$countField = static function (array $rows, string $field): int {
+    $n = 0;
+    foreach ($rows as $row) {
+        if (isset($row[$field]) && $row[$field] !== null && $row[$field] !== '') $n++;
+    }
+    return $n;
+};
+$treeConsumed = $countField($D['urunAgaclari'] ?? [], 'tuketildigiOperasyon');
+$routeConv    = $countField($D['routes'] ?? [], 'donusumKodu');
+echo "\n--- Eslenmeyen alanlar (spesifikasyonda karsiligi yok, bilerek atlandi) ---\n";
+echo "  urunAgaclari.tuketildigiOperasyon: $treeConsumed kayitta dolu\n";
+echo "  routes.donusumKodu: $routeConv kayitta dolu\n";
 
 if ($stoppedAt !== null) {
     echo "\n!!! ISLEME DURDU — koleksiyon '{$stoppedAt['collection']}' patladi:\n";

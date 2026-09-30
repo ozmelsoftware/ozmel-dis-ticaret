@@ -214,6 +214,36 @@ abstract class BaseRepository
     }
 
     /**
+     * Silinen-kayit denetimi (SALT OKUMA). DB'deki legacy_id'leri yedektekiyle
+     * karsilastirir. ETL silme yapmaz; bu yalniz raporlar.
+     *  - deletedInBackup: DB'de legacy_id dolu ama yedekte bu id yok -> v1'de silinmis.
+     *  - nullLegacy: legacy_id IS NULL -> v2'de dogrudan acilmis (ya da oto-olusturulmus ref).
+     *
+     * @param array<string,bool> $backupLegacyIds yedekte gecen eski id'ler (anahtar = id)
+     * @return array{deletedInBackup: list<string>, nullLegacy: int}
+     */
+    public function etlLegacyAudit(array $backupLegacyIds): array
+    {
+        $stmt = $this->pdo()->prepare(
+            "SELECT legacy_id FROM `{$this->table()}` WHERE tenant_id = :t AND legacy_id IS NOT NULL"
+        );
+        $stmt->execute(['t' => $this->ctx->tenantId]);
+        $deleted = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $lid) {
+            if (!isset($backupLegacyIds[(string) $lid])) {
+                $deleted[] = (string) $lid;
+            }
+        }
+
+        $n = $this->pdo()->prepare(
+            "SELECT COUNT(*) FROM `{$this->table()}` WHERE tenant_id = :t AND legacy_id IS NULL"
+        );
+        $n->execute(['t' => $this->ctx->tenantId]);
+
+        return ['deletedInBackup' => $deleted, 'nullLegacy' => (int) $n->fetchColumn()];
+    }
+
+    /**
      * Bir ad sutununa gore bul-ya-da-olustur (referans tablolar icin: work_centers,
      * operations, task_people). ETL'de serbest metin bir ada rastlanip karsiligi yoksa
      * otomatik olusturulur. $nameColumn kod-kontrollu.
