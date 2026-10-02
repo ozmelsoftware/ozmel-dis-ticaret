@@ -17,9 +17,12 @@ import { fmtTr, fmtDateTR } from '../core/format.js';
 import { fmtISO, parseISO, addDays } from '../core/report.js';
 import { estimateCompletion } from '../core/eta.js';
 
-// İş emri etiketi: woNo + split (varsa). Referans woNoGoster sipariş no + sıradan üretir;
-// v2 kaydedilmiş woNo'yu kullanır.
-export function woLabel(w) { return (w.woNo || '') + (w.splitLabel ? '-' + w.splitLabel : ''); }
+// İş emri etiketi (referans woNoGoster): sipariş varsa CANLI üretilir — ${orderNo}-${sequence},
+// bölünmüşse sonuna /${splitLabel}. Sipariş yoksa kayıtlı woNo'ya düşer.
+export function woLabel(w, order) {
+  const base = order ? `${order.orderNo}-${w.sequence}` : (w.woNo || '');
+  return w.splitLabel ? `${base}/${w.splitLabel}` : base;
+}
 
 // Bir iş emrinin (adımın) kendi kapasitesi — ETA yedek hızı (referans capForStep).
 function stepCapOf(order, w, ctx) {
@@ -121,7 +124,7 @@ export function orderReportBody(order, z, ctx) {
       const est = estimateCompletion(w, production, { today, fallbackRate: stepCapOf(order, w, ctx), plans: ctx.plans });
       const eta = est.complete ? t('ss.stDone')
         : (est.etaDate ? fmtDateTR(fmtISO(est.etaDate)) + (est.planInsufficient ? t('ss.planInsufficient') : '') : dash);
-      return `<tr><td class="mono">${esc(woLabel(w))}</td><td>${esc(centers.label(w.workCenterId))}</td>
+      return `<tr><td class="mono">${esc(woLabel(w, order))}</td><td>${esc(centers.label(w.workCenterId))}</td>
         <td class="mono" style="text-align:right;">${esc(fmtTr(w.targetQuantity))}</td>
         <td class="mono" style="text-align:right;">${esc(fmtTr(producedByWo.get(w.id) || 0))}</td>
         <td class="mono">${esc(eta)}</td></tr>`;
@@ -144,7 +147,7 @@ export function orderReportBody(order, z, ctx) {
       const done = producedByWo.get(w.id) || 0;
       const tgt = Number(w.targetQuantity) || 0;
       const pct = tgt > 0 ? Math.min(100, Math.round(done / tgt * 100)) : 0;
-      return `<tr><td class="mono">${esc(woLabel(w))}</td><td>${esc(ops.label(w.operationId))}</td><td>${esc(centers.label(w.workCenterId))}</td>
+      return `<tr><td class="mono">${esc(woLabel(w, order))}</td><td>${esc(ops.label(w.operationId))}</td><td>${esc(centers.label(w.workCenterId))}</td>
         <td><div class="ss-prog"><span class="ss-prog-bar"><i style="width:${pct}%; background:var(--color-accent-500);"></i></span><span class="mono ss-prog-pct">%${pct}</span></div></td></tr>`;
     }).join('');
     allBlock = `
