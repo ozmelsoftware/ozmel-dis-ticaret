@@ -757,30 +757,8 @@ textarea.input { min-height: 84px; resize: vertical; }
 .q-dot.ok { background: var(--color-success); }
 .q-dot.bad { background: var(--color-danger); }
 
-/* satış raporları: aylık çubuk grafiği + kırılım barları + filtre + boş hal */
-.rep-filter { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; margin-bottom: 20px; }
-.rep-filter .field { margin: 0; }
-.rep-filter .field label { display: block; font-size: 12px; color: var(--color-neutral-700); margin-bottom: 4px; }
-.rep-note { font-size: 12.5px; color: var(--color-neutral-600); margin: -8px 0 20px; }
-.bars { display: flex; align-items: flex-end; gap: 12px; height: 160px; }
-.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
-.bar-fill { width: 100%; background: var(--color-accent-300); min-height: 3px; }
-.bar-val { font-family: var(--font-mono); font-size: 11px; color: var(--color-neutral-700); }
-.bar-label { font-family: var(--font-mono); font-size: 11px; color: var(--color-neutral-600); }
-.brk-row { display: grid; grid-template-columns: 160px minmax(0, 1fr) 84px; gap: 12px; align-items: center; }
-.brk-row + .brk-row { margin-top: 12px; }
-.brk-name { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brk-name small { color: var(--color-neutral-600); }
-.brk-bar { height: 14px; background: var(--color-neutral-200); position: relative; display: block; }
-.brk-bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--color-accent-300); }
-.brk-val { font-family: var(--font-mono); font-size: 12.5px; text-align: right; color: var(--color-neutral-600); }
-.rep-empty { background: var(--color-surface); border: 1px solid var(--color-divider);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  padding: 64px 24px; text-align: center; }
-.rep-empty .icon { width: 44px; height: 44px; border: 1px solid var(--color-neutral-400); }
-.rep-empty h3 { font-family: var(--font-heading); font-size: 26px; font-weight: 600; text-transform: uppercase; margin: 0; }
-.rep-empty p { margin: 0; font-size: 14.5px; color: var(--color-neutral-700); max-width: 52ch; line-height: 1.6; }
-.rep-empty .acts { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+/* (Satış Raporları'nın eski grafik/filtre/boş-hal CSS'i — .rep-* / .bars / .brk-* —
+   Adım 3'te kaldırıldı; ekran artık collapsiblePanel + ortak ss-r-* kullanıyor.) */
 
 /* Üretim Panosu (TV) — salt görüntüleme, otomatik yenilenen. Tipografi uzaktan
    okunacak kadar büyük (başlık 46 / KPI 58 / kart 44 px). Renkler dinamik → satır içi. */

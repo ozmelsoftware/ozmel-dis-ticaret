@@ -11,7 +11,7 @@ use RuntimeException;
 /**
  * Paylasilan v1 `users` tablosu uzerinde hesap yonetimi. BaseRepository'yi
  * GENISLETMEZ (o tablo created_by/legacy_id gibi v2 sutunlarini tutmaz); tenant
- * filtresini her sorguda ELLE uygular — Dashboard/SalesReport repolariyla ayni desen.
+ * filtresini her sorguda ELLE uygular — Dashboard repo'suyla ayni desen.
  *
  * password_hash hicbir okuma sorgusunda SELECT edilmez; yalnizca yazilir.
  */
