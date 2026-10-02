@@ -244,6 +244,56 @@ abstract class BaseRepository
     }
 
     /**
+     * Bu tabloya ISARET EDEN (gelen) yabanci anahtarlari dondurur — reconcile oncesi
+     * guvenlik kontrolu. CASCADE disi bir bag varsa silme engellenir (yetim/ihlal riski).
+     *
+     * @return list<array{table:string, column:string, constraint:string, deleteRule:string}>
+     */
+    public function etlReferencingForeignKeys(): array
+    {
+        $stmt = $this->pdo()->prepare(
+            "SELECT k.TABLE_NAME AS t, k.COLUMN_NAME AS c, k.CONSTRAINT_NAME AS cn, r.DELETE_RULE AS dr
+               FROM information_schema.KEY_COLUMN_USAGE k
+               JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+                 ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+              WHERE k.REFERENCED_TABLE_SCHEMA = DATABASE()
+                AND k.REFERENCED_TABLE_NAME = :tbl"
+        );
+        $stmt->execute(['tbl' => $this->table()]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[] = [
+                'table'      => (string) $row['t'],
+                'column'     => (string) $row['c'],
+                'constraint' => (string) $row['cn'],
+                'deleteRule' => (string) $row['dr'],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * legacy_id'si verilen listede olan satirlari SERT siler (tenant kapsamli). NULL
+     * legacy satirlara ASLA dokunmaz (IN listesi somut id'lerden olusur + IS NOT NULL
+     * kosulu). Uzlastirma (reconcile) icin; transaction icinde cagrilir.
+     *
+     * @param list<string> $legacyIds
+     * @return int silinen satir sayisi
+     */
+    public function etlDeleteByLegacyIds(array $legacyIds): int
+    {
+        if ($legacyIds === []) {
+            return 0;
+        }
+        $ph = implode(',', array_fill(0, count($legacyIds), '?'));
+        $stmt = $this->pdo()->prepare(
+            "DELETE FROM `{$this->table()}` WHERE tenant_id = ? AND legacy_id IS NOT NULL AND legacy_id IN ($ph)"
+        );
+        $stmt->execute([$this->ctx->tenantId, ...$legacyIds]);
+        return $stmt->rowCount();
+    }
+
+    /**
      * Bir ad sutununa gore bul-ya-da-olustur (referans tablolar icin: work_centers,
      * operations, task_people). ETL'de serbest metin bir ada rastlanip karsiligi yoksa
      * otomatik olusturulur. $nameColumn kod-kontrollu.

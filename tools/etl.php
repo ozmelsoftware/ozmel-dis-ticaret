@@ -42,12 +42,14 @@ spl_autoload_register(static function (string $class): void {
 // tanimli olmadigindan hata mesajlari echo ile verilir.
 $isCli = (PHP_SAPI === 'cli');
 if ($isCli) {
-    $opts   = getopt('', ['file:', 'dry-run']);
+    $opts   = getopt('', ['file:', 'dry-run', 'reconcile']);
     $file   = $opts['file'] ?? null;
     $dryRun = array_key_exists('dry-run', $opts);
+    $reconcile = array_key_exists('reconcile', $opts);
 } else {
     $file   = $ETL_FILE ?? null;
     $dryRun = $ETL_DRYRUN ?? true; // web'de varsayilan dry-run
+    $reconcile = !empty($ETL_RECONCILE); // web'de varsayilan kapali (&reconcile=1 ile acilir)
 }
 
 $stderr = static function (string $msg) use ($isCli): void {
@@ -125,6 +127,19 @@ $int = static function (mixed $v): ?int {
     return is_numeric($v) ? (int) $v : null;
 };
 $bool = static fn(mixed $v): int => $v ? 1 : 0;
+// Tarih normalize: YYYY-MM-DD aynen, YYYY-MM-DDT... -> ilk 10, '-'/bos/null -> null.
+// Baska bir bicim -> null + $dateIssues'a uyari (koleksiyon, id, deger). revision_date
+// alanlari iki yeni bicimde geliyordu ('-' ve ISO T) ve DB'de DATE sutunu patliyordu.
+$dateIssues = [];
+$date = static function (mixed $v, string $col = '', string $id = '') use (&$dateIssues): ?string {
+    if ($v === null) return null;
+    $s = trim((string) $v);
+    if ($s === '' || $s === '-') return null;
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s;          // YYYY-MM-DD
+    if (preg_match('/^\d{4}-\d{2}-\d{2}T/', $s)) return substr($s, 0, 10); // ISO -> gun
+    $dateIssues[] = ['col' => $col, 'id' => $id, 'value' => $s];     // beklenmeyen bicim
+    return null;
+};
 
 // --- kimlik + referans haritalari --------------------------------------------
 $idMap = [];                 // idMap[koleksiyon][eski_id] = yeni_id
@@ -282,7 +297,7 @@ $runCollection('task_people', $D['gorevKisiler'] ?? [], function (array $r)
 
 // --- product_codes (kodTanimlari) — referanslardan sonra (cikanOperasyon FK'si icin) ---
 $runCollection('product_codes', $D['kodTanimlari'] ?? [], function (array $r)
-        use ($repo, &$idMap, &$ref, $str, $num, $resolveOperation): string {
+        use ($repo, &$idMap, &$ref, $str, $num, $date, $resolveOperation): string {
     $cols = [
         'code'            => $str($r['kod'] ?? null) ?? '',
         'name'            => $str($r['ad'] ?? null) ?? '',
@@ -292,7 +307,7 @@ $runCollection('product_codes', $D['kodTanimlari'] ?? [], function (array $r)
         'category'        => $str($r['kategori'] ?? null),
         'drawing_no'      => $str($r['cizimNo'] ?? null),
         'revision'        => $str($r['revizyon'] ?? null),
-        'revision_date'   => $str($r['revizyonTarihi'] ?? null),
+        'revision_date'   => $date($r['revizyonTarihi'] ?? null, 'product_codes', (string) ($r['id'] ?? '')),
         'note'            => $str($r['not'] ?? null),
         'suppliers'       => $str($r['tedarikciler'] ?? null),
         'customer'        => $str($r['musteri'] ?? null),
@@ -418,14 +433,14 @@ if ($stoppedAt === null) {
     $treeRecords = $D['urunAgaclari'] ?? [];
     // Pass 1: parent'siz upsert + kimlik haritasi
     $ok = $runCollection('product_trees', $treeRecords, function (array $r)
-            use ($repo, &$idMap, &$ref, $str, $num, $resolveProduct): string {
+            use ($repo, &$idMap, &$ref, $str, $num, $date, $resolveProduct): string {
         $code = $str($r['kod'] ?? null);
         $productId = $resolveProduct($code); // yoksa EtlSkip
         $cols = [
             'product_code_id'     => $productId,
             'description'         => $str($r['aciklama'] ?? null),
             'revision'            => $str($r['revNo'] ?? null),
-            'revision_date'       => $str($r['revTarihi'] ?? null),
+            'revision_date'       => $date($r['revTarihi'] ?? null, 'product_trees', (string) ($r['id'] ?? '')),
             'unit_quantity'       => $num($r['birimMiktar'] ?? null),
             'outer_diameter'      => $num($r['disCap'] ?? null),
             'inner_diameter'      => $num($r['icCap'] ?? null),
@@ -981,6 +996,113 @@ $runCollection('sites', $D['sites'] ?? [], function (array $r)
     return $res['action'];
 });
 
+// =========================================================================
+// SILINEN KAYIT DENETIMI (hesap) — brief bolum 3. Yazma yok; hem rapor hem
+// reconcile bunu kullanir. dry-run'da dis transaction HENUZ acik: upsert'ler
+// uygulanmis okunur, ama silinmis-sayisi degismez (upsert'li satirin legacy'si
+// yedekte vardir). Silme bundan sonra, rollback'ten ONCE yapilir.
+// =========================================================================
+$auditSpec = [
+    'product_codes'        => 'kodTanimlari',
+    'work_centers'         => 'isMerkezleri',
+    'operations'           => 'operasyonlarListesi',
+    'task_people'          => 'gorevKisiler',
+    'terms'                => 'terimCevirileri',
+    'operators'            => 'operatorler',
+    'product_trees'        => 'urunAgaclari',
+    'routes'               => 'routes',
+    'capacities'           => 'capacity',
+    'tasks'                => 'gorevler',
+    'orders'               => 'orders',
+    'work_orders'          => 'workorders',
+    'downtime_reasons'     => 'durusNedenleri',
+    'production'           => 'production',
+    'machine_plans'        => 'makinePlani',
+    'first_off_points'     => 'firstOffNoktalari',
+    'first_off_records'    => 'firstOffKayitlari',
+    'hourly_points'        => 'saatlikNoktalari',
+    'hourly_records'       => 'saatlikKayitlari',
+    'purchase_requests'    => 'satinalmaIstekleri',
+    'purchase_receipts'    => 'satinalmaGirisleri',
+    'incoming_inspections' => 'girisKaliteKontrolleri',
+    'control_plans'        => 'kontrolPlani',
+    'quality_measurements' => 'kaliteOlcumleri',
+    'sites'                => 'sites',
+];
+// Referans / oto-olusturulan tablolar: NULL legacy beklenir; reconcile'da da ATLANIR.
+$refTables = ['work_centers' => true, 'operations' => true, 'task_people' => true,
+    'terms' => true, 'downtime_reasons' => true];
+
+$deletionAudit = []; // col => ['deletedInBackup'=>list, 'nullLegacy'=>int, 'error'=>?string]
+foreach ($auditSpec as $col => $srcKey) {
+    $backupIds = [];
+    foreach (($D[$srcKey] ?? []) as $rec0) {
+        $id0 = $rec0['id'] ?? null;
+        if ($id0 !== null && $id0 !== '') $backupIds[(string) $id0] = true;
+    }
+    try {
+        $deletionAudit[$col] = $repo[$col]->etlLegacyAudit($backupIds) + ['error' => null];
+    } catch (\Throwable $e) {
+        $deletionAudit[$col] = ['deletedInBackup' => [], 'nullLegacy' => 0, 'error' => $e->getMessage()];
+    }
+}
+
+// =========================================================================
+// UZLASTIRMA (reconcile) — brief bolum 2. Varsayilan KAPALI (--reconcile / &reconcile=1).
+// Yedekte olmayan (legacy_id dolu ama yedekte id yok) kayitlari SERT siler. NULL
+// legacy satirlara ASLA dokunmaz. Kapsam: $auditSpec - $refTables. Yalniz butun
+// koleksiyonlar hatasiz bittiyse calisir. FK: silinecegi olan tablolara gelen FK'lar
+// CASCADE degilse DUR. Silme tek transaction (dry-run'da dis txn ile geri alinir).
+// =========================================================================
+$reconcileReport = ['requested' => $reconcile, 'ran' => false, 'skippedReason' => null,
+    'perTable' => [], 'fkChecked' => [], 'fkBlocked' => []];
+if ($reconcile) {
+    if ($stoppedAt !== null) {
+        $reconcileReport['skippedReason'] = "isleme durdu ({$stoppedAt['collection']}) — reconcile atlandi";
+    } else {
+        // Silinecek hedefler: ref disi, hatasiz, silinecek id'si olan tablolar.
+        $targets = [];
+        foreach ($auditSpec as $col => $_) {
+            if (isset($refTables[$col])) continue;
+            if ($deletionAudit[$col]['error'] !== null) continue;
+            $ids = $deletionAudit[$col]['deletedInBackup'];
+            if ($ids !== []) $targets[$col] = $ids;
+        }
+        // FK guvenlik: silinecegi olan tablolara GELEN FK'lar CASCADE olmali.
+        $blocked = false;
+        foreach ($targets as $col => $_) {
+            foreach ($repo[$col]->etlReferencingForeignKeys() as $fk) {
+                $line = "{$col} <- {$fk['table']}.{$fk['column']} ({$fk['deleteRule']})";
+                $reconcileReport['fkChecked'][] = $line;
+                if (strtoupper($fk['deleteRule']) !== 'CASCADE') {
+                    $reconcileReport['fkBlocked'][] = $line;
+                    $blocked = true;
+                }
+            }
+        }
+        if ($blocked) {
+            $reconcileReport['skippedReason'] = 'beklenmeyen FK (CASCADE disi) — hicbir sey silinmedi';
+        } elseif ($targets === []) {
+            $reconcileReport['ran'] = true; // silinecek yok
+        } else {
+            try {
+                // Db::transaction reentrant: dry-run'da acik dis txn'e katilir (commit YOK,
+                // sonda rollback); canlida kendi txn'ini acar, hata olursa hepsi geri alinir.
+                Db::transaction(function () use ($targets, $repo, &$reconcileReport): void {
+                    foreach ($targets as $col => $ids) {
+                        $n = $repo[$col]->etlDeleteByLegacyIds($ids);
+                        $reconcileReport['perTable'][$col] = ['deleted' => $n, 'ids' => array_slice($ids, 0, 10)];
+                    }
+                });
+                $reconcileReport['ran'] = true;
+            } catch (\Throwable $e) {
+                $reconcileReport['ran'] = false;
+                $reconcileReport['skippedReason'] = 'silme patladi, geri alindi: ' . $e->getMessage();
+            }
+        }
+    }
+}
+
 // --- dry-run: her seyi geri al ----------------------------------------------
 if ($dryRun && Db::pdo()->inTransaction()) {
     Db::pdo()->rollBack();
@@ -1051,59 +1173,21 @@ if ($reasonIssues !== []) {
 }
 
 // =========================================================================
-// SILINEN KAYIT DENETIMI (salt okuma; yazma/silme YOK) — brief bolum 3
-// Her tablo icin iki sayi: (a) DB'de legacy_id dolu ama yedekte yok = v1'de
-// silinmis; (b) legacy_id NULL = v2'de dogrudan acilmis. (b) referans/oto tablolar
-// disinda 0 beklenir; 0 degilse asagida ISARETLENIR (silme ayri karar).
-// Not: dry-run'da bile guncel DB durumunu okur (dis transaction geri alinmistir).
-$auditSpec = [
-    'product_codes'        => 'kodTanimlari',
-    'work_centers'         => 'isMerkezleri',
-    'operations'           => 'operasyonlarListesi',
-    'task_people'          => 'gorevKisiler',
-    'terms'                => 'terimCevirileri',
-    'operators'            => 'operatorler',
-    'product_trees'        => 'urunAgaclari',
-    'routes'               => 'routes',
-    'capacities'           => 'capacity',
-    'tasks'                => 'gorevler',
-    'orders'               => 'orders',
-    'work_orders'          => 'workorders',
-    'downtime_reasons'     => 'durusNedenleri',
-    'production'           => 'production',
-    'machine_plans'        => 'makinePlani',
-    'first_off_points'     => 'firstOffNoktalari',
-    'first_off_records'    => 'firstOffKayitlari',
-    'hourly_points'        => 'saatlikNoktalari',
-    'hourly_records'       => 'saatlikKayitlari',
-    'purchase_requests'    => 'satinalmaIstekleri',
-    'purchase_receipts'    => 'satinalmaGirisleri',
-    'incoming_inspections' => 'girisKaliteKontrolleri',
-    'control_plans'        => 'kontrolPlani',
-    'quality_measurements' => 'kaliteOlcumleri',
-    'sites'                => 'sites',
-];
-// Referans / oto-olusturulan tablolar: NULL legacy beklenir, isaretlenmez.
-$refTables = ['work_centers' => true, 'operations' => true, 'task_people' => true,
-    'terms' => true, 'downtime_reasons' => true];
-
+// SILINEN KAYIT DENETIMI (rapor) — brief bolum 3. Sayilar yukarida ($deletionAudit)
+// hesaplandi. (a) DB'de legacy_id dolu ama yedekte yok = v1'de silinmis; (b) legacy_id
+// NULL = v2'de dogrudan acilmis. (b) referans/oto disinda 0 beklenir; degilse ISARETLE.
+// Reconcile acikken (b) 0'dan buyukse bile silinmez (NULL legacy korunur).
+// =========================================================================
 echo "\n============================================================\n";
-echo " SILINEN KAYIT DENETIMI (salt okuma — silme yok)\n";
+echo " SILINEN KAYIT DENETIMI" . ($reconcileReport['ran'] ? " (reconcile CALISTI — asagidaki sayilar silme oncesi)" : " (salt okuma)") . "\n";
 echo "============================================================\n";
 printf("%-22s %14s %14s\n", 'Tablo', 'YedekteSilinmis', 'v2Dogrudan');
 echo str_repeat('-', 52) . "\n";
 $nullFlagged = [];
 foreach ($auditSpec as $col => $srcKey) {
-    // yedekteki legacy id kumesi
-    $backupIds = [];
-    foreach (($D[$srcKey] ?? []) as $rec0) {
-        $id0 = $rec0['id'] ?? null;
-        if ($id0 !== null && $id0 !== '') $backupIds[(string) $id0] = true;
-    }
-    try {
-        $a = $repo[$col]->etlLegacyAudit($backupIds);
-    } catch (\Throwable $e) {
-        printf("%-22s %14s %14s\n", $col, 'HATA', preg_replace('/\s+/', ' ', $e->getMessage()));
+    $a = $deletionAudit[$col];
+    if ($a['error'] !== null) {
+        printf("%-22s %14s %14s\n", $col, 'HATA', preg_replace('/\s+/', ' ', $a['error']));
         continue;
     }
     $delN = count($a['deletedInBackup']);
@@ -1119,10 +1203,48 @@ foreach ($auditSpec as $col => $srcKey) {
 echo str_repeat('-', 52) . "\n";
 if ($nullFlagged !== []) {
     echo "\n!!! DIKKAT — referans disi tablolarda legacy_id NULL kayit var (0 bekleniyordu):\n";
-    foreach ($nullFlagged as $col => $n) echo "    $col: $n kayit v2'de dogrudan acilmis\n";
-    echo "    Bunlar yeni yedege yansimaz; silme/uzlastirma ayri karar (brief bolum 3).\n";
+    foreach ($nullFlagged as $col => $n) echo "    $col: $n kayit v2'de dogrudan acilmis (reconcile BUNLARA dokunmaz)\n";
 } else {
     echo "Referans disi tablolarda v2-dogrudan (NULL legacy) kayit yok.\n";
+}
+
+// --- Uzlastirma (reconcile) ozeti ---
+echo "\n--- Uzlastirma (reconcile) ---\n";
+if (!$reconcileReport['requested']) {
+    echo "Kapali (acmak icin --reconcile / &reconcile=1). Hicbir sey silinmedi.\n";
+} else {
+    if ($reconcileReport['fkChecked'] !== []) {
+        echo "FK kontrolu (silinecegi olan tablolara gelen baglar):\n";
+        foreach ($reconcileReport['fkChecked'] as $l) echo "  $l\n";
+    }
+    if ($reconcileReport['skippedReason'] !== null) {
+        echo "!!! UZLASTIRMA ATLANDI: {$reconcileReport['skippedReason']}\n";
+        foreach ($reconcileReport['fkBlocked'] as $l) echo "    engel: $l\n";
+    } elseif ($reconcileReport['ran']) {
+        $totDel = 0;
+        if ($reconcileReport['perTable'] === []) {
+            echo "Silinecek kayit yok (tum tablolar yedekle uyumlu).\n";
+        } else {
+            echo ($dryRun ? "SILINECEK (dry-run — geri alindi):\n" : "SILINDI (canli):\n");
+            foreach ($reconcileReport['perTable'] as $col => $pt) {
+                $totDel += $pt['deleted'];
+                echo "  $col: {$pt['deleted']} (id ilk 10: " . implode(', ', $pt['ids']) . ")\n";
+            }
+            echo "  TOPLAM: $totDel satir" . ($dryRun ? " (yazilmadi)" : " silindi") . "\n";
+        }
+    }
+}
+
+// --- Tarih bicimi uyarilari (revision_date) ---
+echo "\n--- Tarih bicimi uyarilari (beklenmeyen -> null yazildi) ---\n";
+if ($dateIssues === []) {
+    echo "Yok. Tum tarihler beklenen bicimde ('-', ISO ve YYYY-MM-DD normalize edildi).\n";
+} else {
+    echo count($dateIssues) . " beklenmeyen tarih bicimi:\n";
+    foreach (array_slice($dateIssues, 0, 20) as $di) {
+        echo "  [{$di['col']}] id={$di['id']} deger='{$di['value']}'\n";
+    }
+    if (count($dateIssues) > 20) echo "  ... (+" . (count($dateIssues) - 20) . " daha)\n";
 }
 
 // =========================================================================

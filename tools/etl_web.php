@@ -6,6 +6,7 @@ declare(strict_types=1);
  *
  *   .../tools/etl_web.php?key=<ANAHTAR>           -> DRY-RUN (varsayilan, HICBIR SEY yazmaz)
  *   .../tools/etl_web.php?key=<ANAHTAR>&live=1     -> CANLI (tablolara yazar)
+ *   ...&reconcile=1                                   -> uzlastirma: yedekte olmayan kayitlari siler
  *   ...&file=/mutlak/yol.json                         -> belirli dosya (varsayilan: data/ ilk *.json)
  *
  * GUVENLIK: yalnizca anahtari bilen calistirir; eslemezse 403. ETL yeniden
@@ -30,6 +31,10 @@ if (!hash_equals(ETL_WEB_KEY, (string) ($_GET['key'] ?? ''))) {
 
 // --dry-run VARSAYILAN; yalnizca ?live=1 ile canli yazar.
 $ETL_DRYRUN = (($_GET['live'] ?? '') !== '1');
+
+// Uzlastirma (yedekte olmayan kayitlari siler) VARSAYILAN KAPALI; yalnizca ?reconcile=1 ile.
+// Dry-run'da da calisir (silinecekleri raporlar, dis transaction geri alir).
+$ETL_RECONCILE = (($_GET['reconcile'] ?? '') === '1');
 
 // Dosya: ?file= mutlak yol; yoksa data/ icindeki ilk *.json.
 $ETL_FILE = isset($_GET['file']) ? (string) $_GET['file'] : null;
