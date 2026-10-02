@@ -2,9 +2,10 @@
 // Referans: v78 viewSatisSiparisleri. Aynı `orders` tablosunu source='satis' görünümüyle
 // okur (Üretim Siparişleri ekranıyla aynı kayıtlar, farklı odak). Migration yok.
 //
-// Üretim durumu HESAPLANIR (elle girilen orders.status DEĞİL): ilerleme yalnız SON rota
-// adımından — bir sipariş beş operasyondan geçse de müşteriye giden bitmiş ürün son adımdan
-// çıkar. Termin riski core/eta.js:estimateCompletion ile (Genel Bakış'la ortak).
+// Durum rozeti + özet + rapor gövdesi ORTAK modülden (_orderReport.js, referans orderStats/
+// orderStatusBadge/siparisRaporIcerigi). Rozet: Tamamlandı/İptal sipariş durumundan, Gecikme
+// Riski/Kapasite Yetersiz hesaplanır. İlerleme yalnız SON rota adımından — bir sipariş beş
+// operasyondan geçse de müşteriye giden bitmiş ürün son adımdan çıkar.
 //
 // Sıralanabilir tablo (kolon başlığı) + arama + durum filtreleri + Rapor modalı + drawer.
 // i18n: dil değişince VERİ ÇEKMEDEN yeniden çizilir (veri closure'da).
@@ -17,8 +18,9 @@ import { errorState, esc } from '../core/states.js';
 import { loadLookup, mapProduct, mapNamed } from '../core/lookups.js';
 import { t, bindLang } from '../core/i18n.js';
 import { fmtTr, fmtDateTR } from '../core/format.js';
-import { fmtISO, parseISO, startOfDay } from '../core/report.js';
-import { estimateCompletion } from '../core/eta.js';
+import { startOfDay } from '../core/report.js';
+import { createCapacityHelpers } from '../core/bottleneck.js';
+import { orderSummary, orderStatus, orderReportBody } from './_orderReport.js';
 
 const api = resource('orders');
 const canWrite = (window.SESSION_ROLE ?? 'editor') === 'editor';
@@ -39,10 +41,10 @@ const SEARCH_FIELDS = ['salesOrderNo', 'orderNo', 'customer', 'note'];
 
 export async function viewSatisSiparisleri(container, params) {
   container.innerHTML = `<div class="loading">${t('common.loading')}</div>`;
-  let products, ops, centers, orders, workOrders, production, routes, statuses;
+  let products, ops, centers, orders, workOrders, production, routes, caps, wh, statuses;
   try {
     let allOrders;
-    [products, ops, centers, allOrders, workOrders, production, routes, statuses] = await Promise.all([
+    [products, ops, centers, allOrders, workOrders, production, routes, caps, wh, statuses] = await Promise.all([
       loadLookup('product-codes', mapProduct),
       loadLookup('operations', mapNamed),
       loadLookup('work-centers', mapNamed),
@@ -50,6 +52,8 @@ export async function viewSatisSiparisleri(container, params) {
       resource('work-orders').listAll().then(r => r.data),
       resource('production').listAll().then(r => r.data),
       resource('routes').listAll().then(r => r.data),
+      resource('capacities').listAll().then(r => r.data),   // ETA yedek hızı + kapasite riski
+      request('/working-hours').then(r => r.data),
       request('/order-statuses').then(r => r.data),   // create için varsayılan durum
     ]);
     orders = allOrders.filter(o => o.source === 'satis');
@@ -59,53 +63,22 @@ export async function viewSatisSiparisleri(container, params) {
     return;
   }
 
+  const { productBottleneck } = createCapacityHelpers({ caps, routes, wh, products, ops, centers, t });
   const woByOrder = new Map();
   for (const w of workOrders) { if (!woByOrder.has(w.orderId)) woByOrder.set(w.orderId, []); woByOrder.get(w.orderId).push(w); }
   const producedByWo = new Map();
   for (const p of production) producedByWo.set(p.workOrderId, (producedByWo.get(p.workOrderId) || 0) + (Number(p.actualQuantity) || 0));
-  const routeMaxSeq = new Map();   // productCodeId -> en yüksek rota sequence
-  for (const r of routes) {
-    const cur = routeMaxSeq.get(r.productCodeId);
-    if (cur == null || Number(r.sequence) > cur) routeMaxSeq.set(r.productCodeId, Number(r.sequence));
-  }
   const today = startOfDay(new Date());
+
+  // Ortak rapor modülüne (referans orderStats/orderStatusBadge/siparisRaporIcerigi) geçilen bağlam.
+  const ctx = { woByOrder, producedByWo, production, today, productBottleneck, products, ops, centers };
+  const summary = (o) => orderSummary(o, ctx);
 
   let search = '';
   let filter = 'hepsi';
   let sortKey = 'startDate';
   let sortDir = -1;
   let reportId = null;
-
-  // Son rota adımının iş emirleri + ilerleme/ETA özeti.
-  function summary(o) {
-    const wos = woByOrder.get(o.id) || [];
-    // Son adım: ürünün en yüksek rota sequence'i; rota yoksa iş emirlerinin en yükseği.
-    let lastSeq = routeMaxSeq.get(o.productCodeId);
-    if (lastSeq == null) lastSeq = wos.reduce((m, w) => Math.max(m, Number(w.sequence) || 0), -Infinity);
-    const lastWos = wos.filter(w => Number(w.sequence) === lastSeq);
-    const hedef = lastWos.reduce((s, w) => s + (Number(w.targetQuantity) || 0), 0);
-    const uretilen = lastWos.reduce((s, w) => s + (producedByWo.get(w.id) || 0), 0);
-    const pct = hedef > 0 ? Math.round(uretilen / hedef * 100) : 0;
-    const tamamMi = hedef > 0 && uretilen >= hedef;
-    // Termin: son adım iş emirlerinin EN GEÇ tahmini bitişi.
-    let eta = null;
-    if (wos.length && !tamamMi) {
-      for (const w of lastWos) {
-        const est = estimateCompletion(w, production, { today });
-        if (est.etaDate && (!eta || est.etaDate > eta)) eta = est.etaDate;
-      }
-    }
-    const due = o.requestedDeliveryDate ? parseISO(o.requestedDeliveryDate) : null;
-    const riskli = !!(eta && due && eta > due);
-    return { wos, lastWos, hedef, uretilen, pct, tamamMi, eta, due, riskli, isEmriVar: wos.length > 0 };
-  }
-
-  function statusOf(z) {
-    if (!z.isEmriVar) return { text: t('ss.stWaiting'), cls: 'warning' };
-    if (z.tamamMi) return { text: t('ss.stDone'), cls: 'success' };
-    if (z.riskli) return { text: t('ss.stRisk'), cls: 'danger' };
-    return { text: t('ss.stInProd'), cls: 'accent' };
-  }
 
   function visible() {
     const q = search.trim().toLocaleLowerCase('tr');
@@ -114,10 +87,10 @@ export async function viewSatisSiparisleri(container, params) {
         const hay = [...SEARCH_FIELDS.map(k => o[k] || ''), products.byId.get(o.productCodeId)?.code || ''].join(' ').toLocaleLowerCase('tr');
         if (!hay.includes(q)) return false;
       }
-      const z = summary(o);
-      if (filter === 'bekleyen') return !z.isEmriVar;
-      if (filter === 'geride') return z.isEmriVar && !z.tamamMi && z.riskli;
-      if (filter === 'tamam') return z.tamamMi;
+      // Filtreler yeni rozetlere eşlenir: İş Emri Bekliyor / Gecikme Riski / Tamamlandı (durum).
+      if (filter === 'bekleyen') return !(woByOrder.get(o.id) || []).length;
+      if (filter === 'geride') { const z = summary(o); return z.isEmriVar && z.riskli; }
+      if (filter === 'tamam') return o.status === 'Tamamlandı';
       return true;
     });
     const val = (o) => {
@@ -174,9 +147,9 @@ export async function viewSatisSiparisleri(container, params) {
 
     const rows = list.map(o => {
       const z = summary(o);
-      const st = statusOf(z);
+      const st = orderStatus(o, z);
       const p = products.byId.get(o.productCodeId) || {};
-      const overdue = !z.tamamMi && z.due && z.due < today;
+      const overdue = !z.doneByProduction && z.due && z.due < today;
       return `
         <tr>
           <td class="mono ss-strong">${esc(o.salesOrderNo || t('common.dash'))}</td>
@@ -220,76 +193,11 @@ export async function viewSatisSiparisleri(container, params) {
     }));
   }
 
-  // --- Rapor modalı ---
+  // --- Rapor modalı --- (gövde ortak modülden: orderReportBody)
   function openReport(id) {
     reportId = id;
     const o = orders.find(x => x.id === id); if (!o) return;
     const z = summary(o);
-    const p = products.byId.get(o.productCodeId) || {};
-    const dash = t('common.dash');
-    const etaText = z.tamamMi ? t('ss.stDone') : (z.eta ? fmtDateTR(fmtISO(z.eta)) : dash);
-
-    const info = [
-      [t('ss.customer'), o.customer || dash],
-      [t('ss.product'), (p.code || '') + (p.name ? ' — ' + p.name : '')],
-      [t('ss.qty'), fmtTr(o.targetQuantity)],
-      [t('ss.orderDate'), o.startDate ? fmtDateTR(o.startDate) : dash],
-      [t('ss.due'), o.requestedDeliveryDate ? fmtDateTR(o.requestedDeliveryDate) : dash],
-    ].map(([l, v]) => `<div><div class="ss-r-lbl">${esc(l)}</div><div class="mono ss-r-val">${esc(v)}</div></div>`).join('');
-
-    let etaBlock;
-    if (!z.isEmriVar) {
-      etaBlock = `<div class="ss-r-warn">${esc(t('ss.noWo'))}</div>`;
-    } else {
-      const kpis = [
-        { lbl: t('ss.kpiProduced'), val: `${fmtTr(z.uretilen)} / ${fmtTr(z.hedef)}`, color: 'var(--color-accent-500)' },
-        { lbl: t('ss.kpiRemaining'), val: fmtTr(Math.max(0, z.hedef - z.uretilen)), color: 'var(--color-accent-500)' },
-        { lbl: t('ss.kpiEta'), val: etaText, color: z.riskli ? 'var(--color-danger)' : 'var(--color-success)' },
-      ].map(k => `<div class="ss-kpi" style="border-top-color:${k.color};"><div class="ss-kpi-lbl">${esc(k.lbl)}</div><div class="ss-kpi-val">${esc(k.val)}</div></div>`).join('');
-      etaBlock = `<div class="ss-kpis">${kpis}</div><div class="text-muted" style="font-size:12.5px; margin-top:10px;">${esc(t('ss.etaNote'))}</div>`;
-    }
-
-    // Bölünmüş son adım (>1 iş emri): her biri ayrı ETA.
-    let splitBlock = '';
-    if (z.lastWos.length > 1) {
-      const rows = z.lastWos.map(w => {
-        const est = estimateCompletion(w, production, { today });
-        const eta = est.complete ? t('ss.stDone') : (est.etaDate ? fmtDateTR(fmtISO(est.etaDate)) : t('common.dash'));
-        return `<tr><td class="mono">${esc(woLabel(w))}</td><td>${esc(centers.label(w.workCenterId))}</td>
-          <td class="mono" style="text-align:right;">${esc(fmtTr(w.targetQuantity))}</td>
-          <td class="mono" style="text-align:right;">${esc(fmtTr(producedByWo.get(w.id) || 0))}</td>
-          <td class="mono">${esc(eta)}</td></tr>`;
-      }).join('');
-      splitBlock = `
-        <div style="margin-top:20px;">
-          <div class="text-muted" style="font-size:12.5px; margin-bottom:8px;">${esc(t('ss.splitNote'))}</div>
-          <table class="ss-r-table">
-            <thead><tr><th>${esc(t('ss.colWo'))}</th><th>${esc(t('ss.colMachine'))}</th><th style="text-align:right;">${esc(t('ss.colTarget'))}</th><th style="text-align:right;">${esc(t('ss.colProduced'))}</th><th>${esc(t('ss.colEta'))}</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`;
-    }
-
-    // Tüm iş emirleri (rota sırasına göre).
-    let allBlock = '';
-    if (z.isEmriVar) {
-      const sorted = z.wos.slice().sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0));
-      const rows = sorted.map(w => {
-        const done = producedByWo.get(w.id) || 0;
-        const tgt = Number(w.targetQuantity) || 0;
-        const pct = tgt > 0 ? Math.min(100, Math.round(done / tgt * 100)) : 0;
-        return `<tr><td class="mono">${esc(woLabel(w))}</td><td>${esc(ops.label(w.operationId))}</td><td>${esc(centers.label(w.workCenterId))}</td>
-          <td><div class="ss-prog"><span class="ss-prog-bar"><i style="width:${pct}%; background:var(--color-accent-500);"></i></span><span class="mono ss-prog-pct">%${pct}</span></div></td></tr>`;
-      }).join('');
-      allBlock = `
-        <div style="margin-top:20px;">
-          <div class="ss-r-sec">${esc(t('ss.woSection'))}</div>
-          <table class="ss-r-table">
-            <thead><tr><th>${esc(t('ss.colWoNo'))}</th><th>${esc(t('ss.colOperation'))}</th><th>${esc(t('ss.colMachine'))}</th><th>${esc(t('ss.colProgress'))}</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`;
-    }
 
     const overlay = document.createElement('div');
     overlay.className = 'ss-modal-backdrop';
@@ -299,12 +207,7 @@ export async function viewSatisSiparisleri(container, params) {
           <span class="ss-modal-title">${esc(t('ss.reportTitle', { no: o.orderNo || o.salesOrderNo || '' }))}</span>
           <button class="btn btn-ghost" id="ss-r-x">×</button>
         </div>
-        <div class="ss-modal-body">
-          <div class="ss-r-info">${info}</div>
-          <div class="ss-r-eta"><div class="ss-r-sec">${esc(t('ss.etaSection'))}</div>${etaBlock}</div>
-          ${splitBlock}
-          ${allBlock}
-        </div>
+        <div class="ss-modal-body">${orderReportBody(o, z, ctx)}</div>
         <div class="ss-modal-foot"><button class="btn btn-secondary" id="ss-r-close">${esc(t('action.close'))}</button></div>
       </div>`;
     container.appendChild(overlay);
@@ -313,8 +216,6 @@ export async function viewSatisSiparisleri(container, params) {
     overlay.querySelector('#ss-r-close').addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
-
-  function woLabel(w) { return (w.woNo || '') + (w.splitLabel ? '-' + w.splitLabel : ''); }
 
   // --- Yeni / düzenle formu (drawer) ---
   function openForm(row) {
@@ -364,5 +265,6 @@ export async function viewSatisSiparisleri(container, params) {
 
 function badgeColor(cls) {
   return cls === 'success' ? 'var(--color-success)' : cls === 'danger' ? 'var(--color-danger)'
-    : cls === 'warning' ? 'var(--color-warning)' : 'var(--color-accent-500)';
+    : cls === 'warning' ? 'var(--color-warning)' : cls === 'neutral' ? 'var(--color-neutral-400)'
+    : 'var(--color-accent-500)';
 }
