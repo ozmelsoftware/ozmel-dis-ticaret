@@ -245,7 +245,7 @@
           <div class="state-msg">${err && err.message ? err.message : err}</div></div>`;
       };
       try {
-        const mod = await import(`./js/modules/${m.file}?v=83`);
+        const mod = await import(`./js/modules/${m.file}?v=84`);
         // view fonksiyonu async — hatası sessiz kalmasın, ekranda göster.
         // params (ör. {id}) çapraz bağlantı odağı için modüle geçilir.
         const p = mod[m.fn](content, params);

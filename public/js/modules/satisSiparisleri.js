@@ -41,10 +41,10 @@ const SEARCH_FIELDS = ['salesOrderNo', 'orderNo', 'customer', 'note'];
 
 export async function viewSatisSiparisleri(container, params) {
   container.innerHTML = `<div class="loading">${t('common.loading')}</div>`;
-  let products, ops, centers, orders, workOrders, production, routes, caps, wh, statuses;
+  let products, ops, centers, orders, workOrders, production, routes, caps, wh, plans, statuses;
   try {
     let allOrders;
-    [products, ops, centers, allOrders, workOrders, production, routes, caps, wh, statuses] = await Promise.all([
+    [products, ops, centers, allOrders, workOrders, production, routes, caps, wh, plans, statuses] = await Promise.all([
       loadLookup('product-codes', mapProduct),
       loadLookup('operations', mapNamed),
       loadLookup('work-centers', mapNamed),
@@ -54,6 +54,7 @@ export async function viewSatisSiparisleri(container, params) {
       resource('routes').listAll().then(r => r.data),
       resource('capacities').listAll().then(r => r.data),   // ETA yedek hızı + kapasite riski
       request('/working-hours').then(r => r.data),
+      resource('machine-plans').listAll().then(r => r.data),   // plan-bazlı ETA
       request('/order-statuses').then(r => r.data),   // create için varsayılan durum
     ]);
     orders = allOrders.filter(o => o.source === 'satis');
@@ -63,7 +64,7 @@ export async function viewSatisSiparisleri(container, params) {
     return;
   }
 
-  const { productBottleneck } = createCapacityHelpers({ caps, routes, wh, products, ops, centers, t });
+  const { getCapacity, productBottleneck } = createCapacityHelpers({ caps, routes, wh, products, ops, centers, t });
   const woByOrder = new Map();
   for (const w of workOrders) { if (!woByOrder.has(w.orderId)) woByOrder.set(w.orderId, []); woByOrder.get(w.orderId).push(w); }
   const producedByWo = new Map();
@@ -71,7 +72,8 @@ export async function viewSatisSiparisleri(container, params) {
   const today = startOfDay(new Date());
 
   // Ortak rapor modülüne (referans orderStats/orderStatusBadge/siparisRaporIcerigi) geçilen bağlam.
-  const ctx = { woByOrder, producedByWo, production, today, productBottleneck, products, ops, centers };
+  // İki ayrı kapasite: getCapacity (adım → ETA yedek hızı), productBottleneck (Kapasite Yetersiz).
+  const ctx = { woByOrder, producedByWo, production, plans, today, getCapacity, productBottleneck, products, ops, centers };
   const summary = (o) => orderSummary(o, ctx);
 
   let search = '';

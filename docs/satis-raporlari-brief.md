@@ -1,7 +1,9 @@
 # Claude Code brief — Satış Raporları + ortak sipariş raporu
 
 **Kural:** Spesifikasyon `docs/referans/2026-09-30.html`. v2 fonksiyonları oradaki gibi çalışmalı.
-İlgili referans fonksiyonları: `viewSatisRaporlari`, `siparisRaporIcerigi`, `orderStats`, `orderSteps`, `workOrderStats`, `orderStatusBadge`, `productDailyTarget`
+İlgili referans fonksiyonları: `viewSatisRaporlari`, `siparisRaporIcerigi`, `orderStats`, `orderSteps`, `workOrderStats`, `planBazliETA`, `capForStep`, `orderStatusBadge`, `productDailyTarget`
+
+**Dikkat:** Referansta `workOrderStats` **iki kez** tanımlı. JS'te sonraki tanım geçerli, yani "Re-defines workOrderStats" yorumlu olan. İlkine bakma.
 
 ---
 
@@ -32,7 +34,17 @@ Taşırken dört sapma düzeltilir:
 
 **1. Son adım:** Referans siparişin **iş emirleri** arasındaki en büyük `sira`yı alıyor. v2 ürünün **rotasındaki** en büyük sequence'i alıyor. Referanstaki gibi yap. Şu anki veride sonuç aynı çıkıyor, ama rotaya adım eklenirse ayrışır.
 
-**2. ETA yedek hızı:** Referans `workOrderStats`'ta üretim kaydı yoksa `productDailyTarget(urun)` (darboğaz kapasitesi) kullanıyor. v2 `estimateCompletion`'a `fallbackRate` geçmiyor, bu yüzden üretimi başlamamış siparişte ETA boş kalıyor. `core/bottleneck.js` → `productBottleneck(productId).bottleneck.capacity` geçilsin.
+**2. Tahmini bitiş (ETA):** Referans her son-adım iş emri için şu sırayla hesaplıyor:
+
+1. Kalan 0 → "Tamamlandı"
+2. **Makine planı varsa** (`planBazliETA`): o iş emrinin plan günleri tarih sırasıyla, planlı adetler kümülatif toplanır. Toplamın hedefe ulaştığı gün = bitiş. Plan hedefe yetmiyorsa son planlı gün + " (plan yetersiz)".
+3. **Plan yoksa:** son 7 üretim kaydının ortalaması günlük hızdır. Hiç üretim yoksa **o adımın makine kapasitesi** kullanılır (`capForStep`: ürün + iş merkezi + operasyon kapasitesi; ürün darboğazı değil). Kalan / hız = gün, bugünden ileri.
+
+Siparişin bitişi, bölünmüş iş emirlerinin en geç bitenidir.
+
+v2'de `core/eta.js` → `estimateCompletion` yalnız 3. adımı yapıyor ve Satış Siparişleri `fallbackRate` geçmiyor. Değişiklik: `estimateCompletion`'a isteğe bağlı bir `plans` seçeneği ekle; verilirse 2. adım önce denenir. Satış Siparişleri ve Satış Raporları `plans` + adım kapasitesini geçer. `plans` vermeyen mevcut çağrılar (Genel Bakış) aynı kalır.
+
+Şu anki veride son operasyonların hiçbirinde makine planı yok, yani 2. adım bugün sonucu değiştirmiyor. Ama kod yolu referanstaki gibi olmalı.
 
 **3. Rozetler** — referans kuralı, bu sırayla:
 
@@ -41,19 +53,19 @@ Taşırken dört sapma düzeltilir:
 | İş emri yok | İş Emri Bekliyor (warn) |
 | sipariş durumu `Tamamlandı` | Tamamlandı (good) |
 | sipariş durumu `İptal` | İptal (neutral) |
-| Gecikme riski (aşağıya bak) | Gecikme Riski (flag) |
+| Tahmini bitiş > siparişin istenen teslim tarihi | Gecikme Riski (flag) |
 | başlangıç + ⌈hedef / darboğaz kapasitesi⌉ gün > istenen teslim | Kapasite Yetersiz (warn) |
 | diğer | Zamanında (good) |
 
 v2'deki "Üretimde" ve hesaplanan "Tamamlandı" kalkar. Referansta Tamamlandı yalnız sipariş durumundan gelir. Bu yüzden 20.000/20.000 biten ama durumu `Aktif` olan sipariş "Zamanında" görünür, bitiş kutusunda "Tamamlandı" yazar. Referans böyle.
 
-**Gecikme Riski — referansta hata var.** `workOrderStats` `wo.istenenTeslimTarihi`'ne bakıyor ama iş emirlerinde bu alan yok (234/234 boş). Sonuç: referansta Gecikme Riski **hiç tetiklenmiyor**. v2'de niyet edilen hesap yapılsın: son adımın en geç ETA'sı > siparişin istenen teslim tarihi. Raporda "Melih'e sorulacak" olarak işaretle.
+Gecikme Riski: son-adım iş emirlerinden herhangi birinin tahmini bitişi siparişin istenen teslim tarihinden sonraysa. "Kapasite Yetersiz" satırındaki darboğaz kapasitesi `productDailyTarget` (ürünün darboğazı) — ETA'daki adım kapasitesiyle karıştırma.
 
 **4. Sipariş durumu sözlüğü:** Referansta sipariş durumu `Aktif / Tamamlandı / İptal`. v2'de `Order::STATUSES` 9 değerli (Hammadde Bekleniyor, Üretimde, … Sevk Edildi) ve ETL `Aktif` yazıyor, oysa `Aktif` o listede yok. Bu adımda **değiştirme**: rozet `Tamamlandı` / `İptal` değerlerine bakar, ikisi de listede var. Sözlük farkı uyum denetiminde ele alınacak.
 
 **Satış Siparişleri'ndeki filtreler** (v2 fazlası, kalabilir) yeni rozetlere eşlenir: Tümü / İş Emri Bekliyor / Gecikme Riski / Tamamlandı.
 
-**Doğrulama:** Satış Siparişleri'nde rozetler değişecek, bu beklenen. Rapor modalındaki sayılar (üretilen/hedef/kalan) değişmemeli. Ayrı commit.
+**Doğrulama:** Satış Siparişleri'nde rozetler değişecek, bu beklenen. Rapor modalında üretilen/hedef/kalan değişmemeli. Tahmini bitiş, üretimi başlamamış iş emirlerinde boştan tarihe dönebilir (yedek hız eklendi). Ayrı commit.
 
 ---
 
@@ -97,7 +109,7 @@ Silmeden önce `grep` ile teyit et, raporda listele.
 ## Kapsam dışı
 
 - `Order::STATUSES` sözlüğü (uyum denetimi)
-- Plan bazlı ETA (`planBazliETA`) — referans bu ekranda kullanmıyor
+- Genel Bakış'ın ETA'sı (`plans` vermeden çağırmaya devam eder) — uyum denetiminde ele alınacak
 
 ---
 
@@ -110,7 +122,7 @@ Silmeden önce `grep` ile teyit et, raporda listele.
 | SP-2026-50500 | 221175 | 20.000 / 20.000 | 0 | Tamamlandı |
 | SP-2026-50502 | 221121 | 20.000 / 20.000 | 0 | Tamamlandı |
 | SP-2026-50482 | 226181 | 600 / 600 | 0 | Tamamlandı |
-| SP-2026-50501 | 221122 | 0 / 20.000 | 20.000 | tarih (darboğaz hızından) |
+| SP-2026-50501 | 221122 | 0 / 20.000 | 20.000 | tarih (son adım makinesinin kapasitesinden) |
 | SP-2026-50741 | 221124 | 0 / 4.000 | 4.000 | tarih |
 
 **Asıl test SP-2026-50741 / 221124:** önceki operasyonlarda 16.000 adet kayıt var, "Üretilen" 0 göstermeli.

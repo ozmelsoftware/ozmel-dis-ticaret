@@ -4,10 +4,12 @@
 // workOrderStats, productDailyTarget, orderSteps.
 //
 // ctx: ortak veri + yardımcılar — çağıran bir kez kurar, her sipariş için geçer:
-//   { woByOrder:Map, producedByWo:Map, production:[], today:Date,
-//     productBottleneck:fn, products, ops, centers }   // lookups: .byId / .label
+//   { woByOrder:Map, producedByWo:Map, production:[], plans:[], today:Date,
+//     getCapacity:fn, productBottleneck:fn, products, ops, centers }   // lookups: .byId / .label
 //
 // İlerleme/hedef YALNIZ SON rota adımından (müşteriye giden bitmiş ürün son adımdan çıkar).
+// İKİ AYRI kapasite: (a) ETA yedek hızı = O ADIMIN kapasitesi (getCapacity); (b) Kapasite
+// Yetersiz rozeti = ürünün DARBOĞAZ kapasitesi (productBottleneck). Karıştırma.
 
 import { esc } from '../core/states.js';
 import { t } from '../core/i18n.js';
@@ -18,6 +20,11 @@ import { estimateCompletion } from '../core/eta.js';
 // İş emri etiketi: woNo + split (varsa). Referans woNoGoster sipariş no + sıradan üretir;
 // v2 kaydedilmiş woNo'yu kullanır.
 export function woLabel(w) { return (w.woNo || '') + (w.splitLabel ? '-' + w.splitLabel : ''); }
+
+// Bir iş emrinin (adımın) kendi kapasitesi — ETA yedek hızı (referans capForStep).
+function stepCapOf(order, w, ctx) {
+  return ctx.getCapacity(order.productCodeId, w.workCenterId, w.operationId)?.capacity ?? null;
+}
 
 // Referans orderStats: son adım iş emirlerinden ilerleme + ETA + kapasite/gecikme riski.
 export function orderSummary(order, ctx) {
@@ -35,32 +42,33 @@ export function orderSummary(order, ctx) {
   // sipariş "Zamanında" rozeti alır, bitiş kutusunda "Tamamlandı" yazar — referans böyle.
   const doneByProduction = hedef > 0 && uretilen >= hedef;
 
-  // SAPMA 2 (düzeltildi): ETA yedek hızı = ürünün darboğaz günlük kapasitesi (referans
-  // productDailyTarget). Üretimi başlamamış siparişte ETA artık boş kalmaz.
-  const cap = ctx.productBottleneck(order.productCodeId).bottleneck?.capacity ?? null;
+  // SAPMA 2 (düzeltildi): ETA yedek hızı = O ADIMIN kapasitesi (referans capForStep/
+  // getCapacity(ürün, iş merkezi, operasyon)), ürün darboğazı DEĞİL. Makine planı varsa
+  // plan-bazlı ETA önceliklidir (estimateCompletion opts.plans). Üretimi/planı olmayan adımda
+  // adım kapasitesine düşer, böylece başlamamış siparişte de ETA dolu.
   let eta = null;
   if (wos.length && !doneByProduction) {
     for (const w of lastWos) {
-      const est = estimateCompletion(w, ctx.production, { today: ctx.today, fallbackRate: cap });
+      const est = estimateCompletion(w, ctx.production, { today: ctx.today, fallbackRate: stepCapOf(order, w, ctx), plans: ctx.plans });
       if (est.etaDate && (!eta || est.etaDate > eta)) eta = est.etaDate;
     }
   }
   const due = order.requestedDeliveryDate ? parseISO(order.requestedDeliveryDate) : null;
-  // SAPMA 3 (Gecikme Riski — referansta hata): referans wo.istenenTeslimTarihi'ne bakıyor,
-  // o alan iş emirlerinde yok (234/234 boş), risk hiç tetiklenmiyor. Niyet edilen hesap:
-  // son adımın en geç ETA'sı > siparişin istenen teslim tarihi. TODO: Melih'e sorulacak.
+  // Gecikme Riski: son adımın en geç ETA'sı > siparişin istenen teslim tarihi. Referansın
+  // geçerli workOrderStats'ı (2. tanım) da siparişin teslim tarihine bakar — hesap doğru.
   const riskli = !!(eta && due && eta > due);
-  // Kapasite Yetersiz: başlangıç + ⌈hedef / darboğaz kapasitesi⌉ gün > istenen teslim
-  // (referans feasible === false). Sipariş hedefi kullanılır (son adım toplamı değil).
+  // Kapasite Yetersiz (AYRI kapasite): başlangıç + ⌈hedef / DARBOĞAZ kapasitesi⌉ gün > istenen
+  // teslim (referans feasible === false). Sipariş hedefi kullanılır (son adım toplamı değil).
+  const bottleneckCap = ctx.productBottleneck(order.productCodeId).bottleneck?.capacity ?? null;
   const orderTarget = Number(order.targetQuantity) || 0;
   const start = order.startDate ? parseISO(order.startDate) : ctx.today;
   let gerekliGun = null, planFinish = null, kapasiteYetersiz = false;
-  if (cap > 0 && orderTarget > 0) {
-    gerekliGun = Math.ceil(orderTarget / cap);
+  if (bottleneckCap > 0 && orderTarget > 0) {
+    gerekliGun = Math.ceil(orderTarget / bottleneckCap);
     planFinish = addDays(start, gerekliGun);
     if (due) kapasiteYetersiz = planFinish > due;
   }
-  return { wos, lastWos, hedef, uretilen, kalan, pct, doneByProduction, cap, eta, due,
+  return { wos, lastWos, hedef, uretilen, kalan, pct, doneByProduction, bottleneckCap, eta, due,
     riskli, gerekliGun, planFinish, kapasiteYetersiz, isEmriVar: wos.length > 0 };
 }
 
@@ -109,8 +117,10 @@ export function orderReportBody(order, z, ctx) {
   let splitBlock = '';
   if (z.lastWos.length > 1) {
     const rows = z.lastWos.map(w => {
-      const est = estimateCompletion(w, production, { today, fallbackRate: z.cap });
-      const eta = est.complete ? t('ss.stDone') : (est.etaDate ? fmtDateTR(fmtISO(est.etaDate)) : dash);
+      // Aynı hesap: makine planı > fiili ortalama > adım kapasitesi.
+      const est = estimateCompletion(w, production, { today, fallbackRate: stepCapOf(order, w, ctx), plans: ctx.plans });
+      const eta = est.complete ? t('ss.stDone')
+        : (est.etaDate ? fmtDateTR(fmtISO(est.etaDate)) + (est.planInsufficient ? t('ss.planInsufficient') : '') : dash);
       return `<tr><td class="mono">${esc(woLabel(w))}</td><td>${esc(centers.label(w.workCenterId))}</td>
         <td class="mono" style="text-align:right;">${esc(fmtTr(w.targetQuantity))}</td>
         <td class="mono" style="text-align:right;">${esc(fmtTr(producedByWo.get(w.id) || 0))}</td>
