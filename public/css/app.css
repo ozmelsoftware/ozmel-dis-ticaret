@@ -444,6 +444,8 @@ textarea.input { min-height: 84px; resize: vertical; }
 .cpanel-meta { font-size: 13px; color: var(--color-neutral-700); }
 .cpanel-right { margin-left: auto; }
 .cpanel-body { border-top: 1px solid var(--color-neutral-200); }
+/* Satış Raporları: katlanabilir panel gövdesindeki rapor içeriği (ss-r-* ortak) padding'i. */
+.sr-report { padding: 18px 20px 20px; }
 
 /* — kapasiteler: makine durumu kart ızgarası + veri uyarıları (ortak .cpanel içinde) — */
 .cap-mstat-strip { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--color-neutral-100);

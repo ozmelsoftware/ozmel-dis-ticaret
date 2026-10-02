@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Özmel</title>
   <!-- ?v: onbellek kirici. app.css/modul degisince artir (build/versiyonlama yok). -->
-  <link rel="stylesheet" href="css/app.css?v=66">
+  <link rel="stylesheet" href="css/app.css?v=67">
   <link rel="icon" type="image/svg+xml" href="img/ozmel-ikon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png">
   <link rel="apple-touch-icon" href="img/favicon-180.png">
@@ -245,7 +245,7 @@
           <div class="state-msg">${err && err.message ? err.message : err}</div></div>`;
       };
       try {
-        const mod = await import(`./js/modules/${m.file}?v=84`);
+        const mod = await import(`./js/modules/${m.file}?v=85`);
         // view fonksiyonu async — hatası sessiz kalmasın, ekranda göster.
         // params (ör. {id}) çapraz bağlantı odağı için modüle geçilir.
         const p = mod[m.fn](content, params);
