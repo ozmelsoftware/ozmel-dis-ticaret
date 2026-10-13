@@ -63,6 +63,7 @@ $routes = [
     'product-trees' => App\Controller\ProductTreeController::class,
     'routes'        => App\Controller\RouteController::class,
     'capacities'    => App\Controller\CapacityController::class,
+    'capacity-exclusions' => App\Controller\CapacityExclusionController::class,
     'orders'        => App\Controller\OrderController::class,
     'work-orders'   => App\Controller\WorkOrderController::class,
     'production'    => App\Controller\ProductionController::class,
