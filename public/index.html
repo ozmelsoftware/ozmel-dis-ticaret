@@ -118,6 +118,7 @@
         ['operators', 'operators.js', 'viewOperators'],
         ['routes', 'routes.js', 'viewRoutes'],
         ['capacities', 'capacities.js', 'viewCapacities'],
+        ['kapasite-analizi', 'kapasiteAnalizi.js', 'viewKapasiteAnalizi'],
         ['machine-plans', 'machinePlans.js', 'viewMachinePlans'],
         ['work-orders', 'workOrders.js', 'viewWorkOrders'],
         ['production', 'production.js', 'viewProduction'],
@@ -245,7 +246,7 @@
           <div class="state-msg">${err && err.message ? err.message : err}</div></div>`;
       };
       try {
-        const mod = await import(`./js/modules/${m.file}?v=85`);
+        const mod = await import(`./js/modules/${m.file}?v=86`);
         // view fonksiyonu async — hatası sessiz kalmasın, ekranda göster.
         // params (ör. {id}) çapraz bağlantı odağı için modüle geçilir.
         const p = mod[m.fn](content, params);

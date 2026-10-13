@@ -748,3 +748,75 @@ Operatörler ekranı iki sekme (`localStorage: ozmel.opr.tab`): **Operatör List
 | opr.colTargetPct / opr.colDowntime | Hedef Gerçekleşme / Duruş | Target Attainment / Downtime |
 | opr.deletedOperator | (silinmiş operatör) | (deleted operator) |
 | opr.perfEmpty | Bu dönemde operatör girilmiş üretim kaydı yok. Üretim Girişi'nde kayıt girerken Operatör seçilmesi gerekir. | No production records with an operator in this period. An Operator must be selected when entering records in Production Entry. |
+
+### Kapasite Analizi
+
+| Anahtar | Türkçe | English |
+|---|---|---|
+| menu.kapasite-analizi | Kapasite Analizi | Capacity Analysis |
+| ka.subtitle | Gerçekleşen üretimden makine/ürün/operasyon başına günlük kapasiteyi hesaplar, tanımlı kapasiteyle karşılaştırır ve öneri verir. | Estimates daily capacity per machine/product/operation from actual production, compares it with defined capacity and suggests a value. |
+| ka.emptyNoProd | Henüz üretim kaydı yok | No production records yet |
+| ka.emptyNoProdHint | Üretim Girişi'nden kayıt girildiğinde kapasite analizi burada görünür. | Capacity analysis appears here once records are entered from Production Entry. |
+| ka.emptyNoWh | Çalışma saatleri tanımlı değil | Working hours not defined |
+| ka.emptyNoWhHint | Önce Çalışma Saatleri modülünden vardiya saatlerini girin. | First enter shift hours from the Working Hours module. |
+| ka.modeAll | Tüm Zamanlar | All Time |
+| ka.modeMonthly | Aylık | Monthly |
+| ka.modeWeekly | Haftalık | Weekly |
+| ka.shownValue | Gösterilen değer: | Shown value: |
+| ka.valDowntimeless | Duruşsuz günlük | Downtime-free daily |
+| ka.valActual | Gerçekleşen günlük (duruşlu) | Actual daily (with downtime) |
+| ka.allMachines | Tüm makineler | All machines |
+| ka.searchPlaceholder | Ürün / operasyon ara | Search product / operation |
+| ka.methodHtml | <b>Nasıl hesaplanıyor?</b> "Günlük" = bir tam gün (Sabah {sabah} dk + Öğleden Sonra {ogle} dk = {gun} dk net, mola hariç). <b>Gerçekleşen günlük (duruşlu)</b> = toplam adet ÷ planlı vardiya süresi × tam gün. <b>Duruşsuz günlük</b> = toplam adet ÷ (planlı süre − duruş) × tam gün. Aynı makinede aynı gün ve vardiyada birden çok iş emri çalıştıysa süre eşit bölünür. Mesai vardiyası hesaba katılmaz. <b>Öneri</b>, duruşsuz değer tanımlıdan %10'dan fazla saptığında ve en az {min} üretim günü olan satırlarda çıkar. | <b>How is it calculated?</b> "Daily" = one full day (Morning {sabah} min + Afternoon {ogle} min = {gun} min net, breaks excluded). <b>Actual daily (with downtime)</b> = total qty ÷ planned shift time × full day. <b>Downtime-free daily</b> = total qty ÷ (planned time − downtime) × full day. If several work orders ran on the same machine on the same day and shift, the shift time is split equally. The overtime shift is not counted. A <b>suggestion</b> appears where the downtime-free value deviates more than 10% from the defined value, and on rows with at least {min} production days. |
+| ka.colProduct | ÜRÜN | PRODUCT |
+| ka.colOperation | OPERASYON | OPERATION |
+| ka.colMachine | MAKİNE | MACHINE |
+| ka.colDay | GÜN | DAYS |
+| ka.colTotal | TOPLAM ADET | TOTAL QTY |
+| ka.colDefined | TANIMLI GÜNLÜK | DEFINED DAILY |
+| ka.colDefinedShort | TANIMLI | DEFINED |
+| ka.colActual | GERÇEKLEŞEN GÜNLÜK (DURUŞLU) | ACTUAL DAILY (WITH DOWNTIME) |
+| ka.colDowntimeless | DURUŞSUZ GÜNLÜK | DOWNTIME-FREE DAILY |
+| ka.colDowntimePct | DURUŞ % | DOWNTIME % |
+| ka.colDiff | FARK | DIFF |
+| ka.colSuggestion | ÖNERİ | SUGGESTION |
+| ka.colDate | TARİH | DATE |
+| ka.colRecords | KAYIT | RECORDS |
+| ka.colQty | ADET | QTY |
+| ka.colNote | AÇIKLAMA | NOTE |
+| ka.nRecords | {n} kayıt | {n} records |
+| ka.nDays | {n} gün | {n} days |
+| ka.undefined | tanımsız | undefined |
+| ka.noMatch | Filtreye uyan kayıt yok. | No records match the filter. |
+| ka.rowCount | {n} satır · ürün + operasyon + makine bazında | {n} rows · by product + operation + machine |
+| ka.weeklyHint | Sütun başlığı haftanın pazartesi günüdür (gün.ay). Hücrenin altındaki sayı o dönemdeki üretim günü sayısıdır. Renk: tanımlı kapasiteye göre — yeşil ±%10, kırmızı düşük, mavi yüksek. | Column header is the Monday of the week (day.month). The number below each cell is the production days in that period. Color: vs defined capacity — green ±10%, red low, blue high. |
+| ka.monthlyHint | Hücrenin altındaki sayı o dönemdeki üretim günü sayısıdır. Renk: tanımlı kapasiteye göre — yeşil ±%10, kırmızı düşük, mavi yüksek. | The number below each cell is the production days in that period. Color: vs defined capacity — green ±10%, red low, blue high. |
+| ka.shareWarn | ⚑ %{p} süre paylaşımlı | ⚑ {p}% time shared |
+| ka.shareWarnTitle | Bu satırın süresinin %{p}'i aynı makinede aynı vardiyada başka iş emirleriyle paylaşıldı; makine birden fazla tezgâhı temsil ediyorsa rakam yüksek çıkabilir, uygulamadan önce doğrulayın. | {p}% of this row's time was shared with other work orders on the same machine and shift; if the machine represents multiple stations the figure may be high — verify before applying. |
+| ka.apply | Uygula | Apply |
+| ka.sugOk | Uygun | OK |
+| ka.sugLower | Düşür → {n} | Lower → {n} |
+| ka.sugRaise | Artır → {n} | Raise → {n} |
+| ka.sugDefine | Tanımla → {n} | Define → {n} |
+| ka.sugLowData | Az veri | Low data |
+| ka.sugLowDataTitle | Güvenilir sonuç için en az {n} üretim günü gerekir | At least {n} production days are needed for a reliable result |
+| ka.exclTitle | Analize dahil edilmeyen kayıtlar | Records excluded from analysis |
+| ka.included | Hesaba katılan: {k} üretim kaydı, {g} gün | Included: {k} production records, {g} days |
+| ka.noExclusions | Hariç tutulan tarih yok. | No excluded dates. |
+| ka.includeBack | Dahil et | Include |
+| ka.excNotePlaceholder | Açıklama (örn. stok girişi) | Note (e.g. stock entry) |
+| ka.excAdd | + Tarihi Hariç Tut | + Exclude Date |
+| ka.noteFilter | Notunda "iş emri kapamak için" veya "giriş yapılmıştır" geçen kayıtları da hariç tut ({n} kayıt, {adet} adet) | Also exclude records whose note contains "iş emri kapamak için" or "giriş yapılmıştır" ({n} records, {adet} pcs) |
+| ka.excludedSummary | Ayrıca {bos} boş kaydedilmiş satır (0 adet, duruşsuz) ve {mesai} mesai kaydı hesaba katılmadı. Tarihlerin toplam hariç kayıt sayısı: {tar}. | Also {bos} empty rows (0 qty, no downtime) and {mesai} overtime records were not counted. Total excluded records across dates: {tar}. |
+| ka.applyTitle | Kapasite güncellensin mi? | Update capacity? |
+| ka.applyBody | {urun} · {makine} — Tanımlı günlük kapasite {n} adet olarak güncellenecek. Bu rakam haftalık plan hedeflerini ve verimlilik hesabını etkiler. | {urun} · {makine} — Defined daily capacity will be updated to {n} pcs. This figure affects weekly plan targets and the productivity calculation. |
+| ka.applyShareWarn | ⚠ Bu satırın süresinin %{p}'i başka iş emirleriyle paylaşıldı; rakamı doğrulayın. | ⚠ {p}% of this row's time was shared with other work orders; verify the figure. |
+| ka.applyConfirm | Güncelle | Update |
+| ka.applied | Kapasite {n} olarak güncellendi | Capacity updated to {n} |
+| ka.excDatePick | Tarih seçin | Select a date |
+| ka.excDup | Bu tarih zaten listede | This date is already listed |
+| ka.excAdded | {d} analizden hariç tutuldu | {d} excluded from analysis |
+| ka.excRemoveTitle | Analize dahil et | Include in analysis |
+| ka.excRemoveBody | Bu tarih analize yeniden dahil edilsin mi? | Include this date in the analysis again? |
+| ka.excRemoveConfirm | Dahil et | Include |
+| ka.excRemoved | {d} analize dahil edildi | {d} included in analysis |
