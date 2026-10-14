@@ -153,7 +153,7 @@ export async function viewSalesReports(container) {
       }).join('')}</div>`;
 
     host.innerHTML = `
-      <div id="satis-pano-root" style="background:#0d1117; border-radius:8px; padding:24px;">
+      <div id="satis-pano-root" style="background:#0d1117; border-radius:8px; padding:24px; overflow:auto; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
           <div style="color:#e6edf3; font-family:var(--font-heading); font-size:22px; font-weight:600;">${esc(t('sr.panoTitle'))}</div>
           <button class="btn btn-sm btn-ghost sr-pano-fs" style="color:#e6edf3; border-color:#30363d;">⛶ ${esc(t('pano.fullscreen'))}</button>

@@ -141,6 +141,8 @@ textarea.input { min-height: 84px; resize: vertical; }
   font: inherit; font-size: 13px; height: 32px; padding: 0 12px; cursor: pointer; }
 .topbar .logout:hover { background: var(--color-neutral-200); border-color: var(--color-neutral-500); }
 .content { flex: 1; overflow: auto; padding: 24px 24px 40px; min-width: 0; }
+/* Satış Pano tam ekran: fullscreen'de kök eleman ekranı doldurur ve içerik uzunsa kayar. */
+#satis-pano-root:fullscreen { width: 100%; height: 100%; overflow-y: auto; border-radius: 0; }
 
 /* form bolum basligi (uzun formlari gruplar, or. kod tanimlari) */
 .form-section { margin: var(--space-6) 0 var(--space-3); }
