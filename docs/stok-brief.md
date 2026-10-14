@@ -79,16 +79,16 @@ yürüyüşü (nodeById/rootProductOf/multFromRoot) bu modüle taşınır.
 ## Kapsam dışı
 - WIP / sipariş-aşama zaman çizgisi (v81 Stok'tan çıkarıldı; `wipOzetHesapla` başka ekranda).
 - Ürün Ağaçları "Verim" kolonu (ayrı iş — ama `core/bom.js` buna da hazır olacak).
-- Düşük stok / min-seviye uyarısı: referans yeni tabloda göstermiyor (bugünkü v2'de var; kaldırılabilir).
 
-## AÇIK KARARLAR (uygulamadan önce netleşmeli)
-1. **Kategori kaynağı:** Referansla birebir → ağaçtan türet (3 sekme: Hammadde / Satınalınan / Yarı
-   Mamül; `materialLength` ayrımı). v2'nin `product-codes.type` (Hammadde/Yarı Mamül/**Ürün**) alanı
-   bu 3 kategoriyi karşılamıyor ("Satınalınan Malzeme" yok). → Ağaç-türetme önerilir; onaylansın.
-2. **BOM verim hesabı şimdi mi?** "Gerekli" (özellikle kg) bu hesap olmadan çıkmaz. `core/bom.js`'i
-   bu turda kuralım mı (önerilen), yoksa "gerekli"yi şimdilik basit (yalnız adet/materialWeight) mi
-   yapıp tam hesabı sonraki tura mı bırakalım?
-3. **Tüketim değişikliği** (Kesim → ilk-sıra adım) net stok sayılarını değiştirir — onay.
+## Kesinleşti — HER ŞEY REFERANSLA (index/v81) BİREBİR, sapma yok
+1. **Kategori:** ağaçtan türetilir (`malzemeKategorisi` birebir): yaprak + `materialLength` → Hammadde,
+   yaprak + length yok → Satınalınan Malzeme, çocuğu olan → Yarı Mamül. v2 `type` alanı kategoride
+   KULLANILMAZ (referans da kullanmıyor).
+2. **BOM verim hesabı bu turda kurulur** — `core/bom.js` (`bomDugumHesapla`, `bomYapraklariTopla`,
+   `bomCocuklari`, `bomYaprakMi`, `urunHammaddeIhtiyaciHesapla`) referanstaki gövdelerle birebir.
+   "Gerekli" (kg/adet) index'teki gibi çıkar. Basitleştirme YOK.
+3. **Tüketim** ilk-sıra rota adımından hesaplanır (referans `hammaddeStokBilgisiByKod` birebir).
+   Min-stok uyarısı referans yeni tabloda yok → gösterilmez.
 
 ## Doğrulama & kayıt
 `node --check`, TR/EN anahtar dengesi, tarayıcıda aç. Yeni `stok.*` anahtarları (sekmeler, kolonlar,
