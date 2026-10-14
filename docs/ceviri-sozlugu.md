@@ -843,3 +843,14 @@ Operatörler ekranı iki sekme (`localStorage: ozmel.opr.tab`): **Operatör List
 | stok.semiHint | Kendi siparişlerinde üretilmiş ama henüz başka ürüne aktarılmamış miktar — Ürün Ağacı'nda başka ürünlerin girdisi olan ürünler | Produced in its own orders but not yet transferred to another product — products used as inputs of other products in the Product Tree |
 | stok.colSemiProduced | Üretilen (Kendi Siparişleri) | Produced (Own Orders) |
 | stok.colSemiNeeded | Diğer Ürünlerin İhtiyacı | Other Products' Need |
+
+### Satış Raporları — Pano (TV)
+
+| Anahtar | Türkçe | English |
+|---|---|---|
+| sr.viewList | Liste | List |
+| sr.viewPano | Pano (TV Görünümü) | Board (TV View) |
+| sr.panoTitle | Sipariş İlerleyiş Panosu | Order Progress Board |
+| sr.panoEmpty | Devam eden sipariş yok. | No orders in progress. |
+| sr.panoWaiting | İş emri bekliyor | Awaiting work order |
+| sr.panoLate | GECİKMİŞ | OVERDUE |
