@@ -36,13 +36,18 @@ const resultLabel = (v) => { if (!v) return '—'; const k = 'qc.' + v; const s 
 
 export async function viewIncomingInspections(container) {
   container.innerHTML = `<div class="loading">${t('common.loading')}</div>`;
-  let products, receipts;
+  let products, receipts, terms;
   try {
-    [products, receipts] = await Promise.all([
+    [products, receipts, terms] = await Promise.all([
       loadLookup('product-codes', (r) => ({ id: r.id, code: r.code, name: r.name, unit: r.unit })),
       loadLookup('purchase-receipts', (r) => ({ id: r.id, code: '#' + r.id, name: r.date || '' })),
+      resource('terms').listAll().then(r => r.data),   // Çeviri Sözlüğü — Excel'in İngilizce sayfası için
     ]);
   } catch (err) { container.innerHTML = ''; container.appendChild(errorState({ message: err.message, onRetry: () => viewIncomingInspections(container) })); return; }
+
+  // TR → EN terim çevirisi (karakteristik adı, gözlem nedeni). Karşılığı yoksa Türkçe kalır.
+  const termMap = new Map((terms || []).filter(x => x.translation).map(x => [x.original, x.translation]));
+  const translate = (s) => termMap.get(s) || s;
 
   // Excel'e aktar bağlamı. kapsananOzet Part B'de (çoklu kapsama) doldurulacak — şimdilik boş.
   const excelCtx = (row) => ({
@@ -50,6 +55,7 @@ export async function viewIncomingInspections(container) {
     materialCode: (id) => products.byId.get(id)?.code || '',
     birim: (products.byId.get(row.materialCodeId)?.unit) || '',
     kapsananOzet: [],
+    translate,
   });
 
   const table = new DataTable(container, {

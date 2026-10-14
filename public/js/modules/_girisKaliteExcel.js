@@ -88,7 +88,7 @@ async function excelDosyaIndir(wb, dosyaAdi) {
 
 // k normalize edilmiş kayıt, birim string, kapsananOzet string[]. İki AYRI SAYFA üretir:
 // "Giriş Kalite Kontrol" (TR) ve "Incoming Quality Control" (EN).
-function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
+function excelOlustur(ExcelJS, k, birim, kapsananOzet, translate) {
   const kar = k.karakteristikler || [];
   const toplamNumune = Math.max(k.ornekAdedi || 0, ...kar.map(x => (x.degerler || []).length), 1);
   const parcaSayisi = Math.ceil(toplamNumune / 10);
@@ -141,7 +141,7 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
   };
 
   // Verilen sayfaya (ws) tek dilli formu çizer. r/kullanilan sayfaya ÖZELdir.
-  function cizSayfa(ws, L) {
+  function cizSayfa(ws, L, cev) {
     genislikler.forEach((g, i) => { ws.getColumn(i + 1).width = g; });
     let r = 0, kullanilan = 0;
     const satirToplami = (a, b) => { let tt = 0; for (let i = a; i <= b; i++) tt += ws.getRow(i).height || 15; return tt; };
@@ -193,7 +193,7 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
     bilgi(L.material, k.malzeme || '', L.arrivalDate, tarih(k.malzemeGelisTarihi));
     bilgi(L.drawingNo, k.cizimNo || '', L.waybillNo, '');
     bilgi(L.receivedQty, `${k.gelenAdet ?? ''} ${birim}`.trim(), L.sampleQty, k.ornekAdedi ?? '');
-    bilgi(L.reason, k.gozlemNedeni || '', L.inspector, k.kontrolEden || '');
+    bilgi(L.reason, cev(k.gozlemNedeni || ""), L.inspector, k.kontrolEden || '');
     if (kapsananOzet.length) {
       const metin = kapsananOzet.join('   |   ');
       r++;
@@ -235,7 +235,7 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
           r++;
           const d = satirDurum(x);
           yaz(r, 1, 1, x.no ?? '', { align: 'center' });
-          yaz(r, 2, 2, x.tanim || '', {});
+          yaz(r, 2, 2, cev(x.tanim || ""), {});
           yaz(r, 3, 3, olcuMetni(x), { align: 'center', size: 9 });
           const ondalikSay = (n) => (String(n).split('.')[1] || '').length;
           let ondalik = 0;
@@ -298,8 +298,8 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
   }
 
   // İki AYRI SAYFA: Türkçe + İngilizce.
-  cizSayfa(wb.addWorksheet('Giriş Kalite Kontrol', { views: [{ showGridLines: false }] }), LABELS.tr);
-  cizSayfa(wb.addWorksheet('Incoming Quality Control', { views: [{ showGridLines: false }] }), LABELS.en);
+  cizSayfa(wb.addWorksheet('Giriş Kalite Kontrol', { views: [{ showGridLines: false }] }), LABELS.tr, (s) => s);
+  cizSayfa(wb.addWorksheet('Incoming Quality Control', { views: [{ showGridLines: false }] }), LABELS.en, translate);
   return wb;
 }
 
@@ -332,7 +332,7 @@ export async function exportInspectionExcel(inspection, ctx) {
   try { ExcelJS = await exceljsYukle(); }
   catch (e) { toast(t('gk.excelLibFail'), 'danger'); return; }
   try {
-    const wb = excelOlustur(ExcelJS, k, ctx.birim || '', ctx.kapsananOzet || []);
+    const wb = excelOlustur(ExcelJS, k, ctx.birim || "", ctx.kapsananOzet || [], ctx.translate || ((s) => s));
     const kod = (inspection.materialCodeId != null ? ctx.materialCode(inspection.materialCodeId) : '') || 'Kontrol';
     const ad = String(kod).replace(/[^\wşŞıİçÇöÖüÜğĞ]+/g, '_').slice(0, 40);
     const dosyaAdi = `Giris_Kalite_${ad}_${inspection.inspectionDate || ''}.xlsx`;
