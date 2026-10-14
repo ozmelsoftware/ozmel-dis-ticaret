@@ -309,6 +309,9 @@ const DICT = {
     // Giriş Kalite Kontrolleri
     'ii.subtitle': 'Gelen malzeme kontrolü — karakteristikler ve ölçüm değerleri',
     'ii.new': 'Yeni Kontrol', 'ii.empty': 'Henüz kontrol yok. "Yeni Kontrol" ile başlayın.',
+    'gk.excelBtn': '📄 Excel', 'gk.excelPreparing': 'Excel hazırlanıyor…',
+    'gk.excelLibFail': 'Excel kütüphanesi yüklenemedi — internet bağlantınızı kontrol edin',
+    'gk.excelDone': 'Excel dosyası indirildi', 'gk.excelFail': 'Excel oluşturulamadı: {e}',
     'ii.newTitle': 'Yeni Kontrol', 'ii.editTitle': 'Kontrol Düzenle',
     'ii.secControl': 'Kontrol', 'ii.secDateQty': 'Tarih & Adet', 'ii.secChars': 'Karakteristikler',
     'ii.purchaseReceipt': 'Satınalma Girişi', 'ii.drawingNo': 'Çizim No', 'ii.reason': 'Gözlem Nedeni',
@@ -1018,6 +1021,9 @@ const DICT = {
     // Incoming Inspections
     'ii.subtitle': 'Incoming material control — characteristics and measurement values',
     'ii.new': 'New Inspection', 'ii.empty': 'No inspections yet. Start with "New Inspection".',
+    'gk.excelBtn': '📄 Excel', 'gk.excelPreparing': 'Preparing Excel…',
+    'gk.excelLibFail': 'Excel library could not be loaded — check your internet connection',
+    'gk.excelDone': 'Excel file downloaded', 'gk.excelFail': 'Could not create Excel: {e}',
     'ii.newTitle': 'New Inspection', 'ii.editTitle': 'Edit Inspection',
     'ii.secControl': 'Inspection', 'ii.secDateQty': 'Dates & Quantity', 'ii.secChars': 'Characteristics',
     'ii.purchaseReceipt': 'Purchase Receipt', 'ii.drawingNo': 'Drawing No', 'ii.reason': 'Observation Reason',

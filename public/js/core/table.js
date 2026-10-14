@@ -228,7 +228,7 @@ export class DataTable {
     if (this.page > pages) this.page = pages;
     const start = (this.page - 1) * pageSize;
     const slice = rows.slice(start, start + pageSize);
-    const hasActions = this.o.onEdit || this.o.onDelete;
+    const hasActions = this.o.onEdit || this.o.onDelete || (this.o.rowActions && this.o.rowActions.length);
     const hasExpand = !!this.o.expand;
     this._colCount = this.o.columns.length + (hasActions ? 1 : 0) + (hasExpand ? 1 : 0);
 
@@ -299,6 +299,14 @@ export class DataTable {
 
   actionsCell(row) {
     const td = el('td', 'actions');
+    // rowActions: Edit/Delete'ten bağımsız, HER ZAMAN etkin ekstra satır eylemleri (ör. Excel'e
+    // aktar — salt-okuma güvenli). {label, kind?, onClick}. canWrite'tan etkilenmez.
+    for (const a of (this.o.rowActions || [])) {
+      const b = el('button', `btn ${a.kind || 'btn-ghost'} btn-sm`, esc(typeof a.label === 'function' ? a.label() : a.label));
+      b.type = 'button';
+      b.addEventListener('click', (e) => { e.stopPropagation(); a.onClick(row); });
+      td.appendChild(b);
+    }
     if (this.o.onEdit) td.appendChild(this.actionBtn(t('action.edit'), 'btn-ghost', () => this.o.onEdit(row)));
     if (this.o.onDelete) td.appendChild(this.actionBtn(t('action.delete'), 'btn-danger', () => this.o.onDelete(row)));
     return td;

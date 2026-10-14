@@ -854,3 +854,13 @@ Operatörler ekranı iki sekme (`localStorage: ozmel.opr.tab`): **Operatör List
 | sr.panoEmpty | Devam eden sipariş yok. | No orders in progress. |
 | sr.panoWaiting | İş emri bekliyor | Awaiting work order |
 | sr.panoLate | GECİKMİŞ | OVERDUE |
+
+### Giriş Kalite — Excel'e aktar
+
+| Anahtar | Türkçe | English |
+|---|---|---|
+| gk.excelBtn | 📄 Excel | 📄 Excel |
+| gk.excelPreparing | Excel hazırlanıyor… | Preparing Excel… |
+| gk.excelLibFail | Excel kütüphanesi yüklenemedi — internet bağlantınızı kontrol edin | Excel library could not be loaded — check your internet connection |
+| gk.excelDone | Excel dosyası indirildi | Excel file downloaded |
+| gk.excelFail | Excel oluşturulamadı: {e} | Could not create Excel: {e} |

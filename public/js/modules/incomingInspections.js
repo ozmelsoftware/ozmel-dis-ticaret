@@ -13,6 +13,7 @@ import { toast } from '../core/toast.js';
 import { confirmDialog, errorState, esc } from '../core/states.js';
 import { loadLookup, mapProduct, withCurrent } from '../core/lookups.js';
 import { measurementDetail } from './_measDetail.js';
+import { exportInspectionExcel } from './_girisKaliteExcel.js';
 import { t } from '../core/i18n.js';
 
 const api = resource('incoming-inspections');
@@ -38,16 +39,26 @@ export async function viewIncomingInspections(container) {
   let products, receipts;
   try {
     [products, receipts] = await Promise.all([
-      loadLookup('product-codes', mapProduct),
+      loadLookup('product-codes', (r) => ({ id: r.id, code: r.code, name: r.name, unit: r.unit })),
       loadLookup('purchase-receipts', (r) => ({ id: r.id, code: '#' + r.id, name: r.date || '' })),
     ]);
   } catch (err) { container.innerHTML = ''; container.appendChild(errorState({ message: err.message, onRetry: () => viewIncomingInspections(container) })); return; }
+
+  // Excel'e aktar bağlamı. kapsananOzet Part B'de (çoklu kapsama) doldurulacak — şimdilik boş.
+  const excelCtx = (row) => ({
+    materialLabel: (id) => products.label(id),
+    materialCode: (id) => products.byId.get(id)?.code || '',
+    birim: (products.byId.get(row.materialCodeId)?.unit) || '',
+    kapsananOzet: [],
+  });
 
   const table = new DataTable(container, {
     title: () => t('menu.incoming-inspections'),
     subtitle: () => t('ii.subtitle'),
     canWrite,
     addLabel: () => t('ii.new'),
+    // Salt-okuma güvenli: Excel'e aktar her kullanıcıda etkin.
+    rowActions: [{ label: () => t('gk.excelBtn'), kind: 'btn-ghost', onClick: (row) => exportInspectionExcel(row, excelCtx(row)) }],
     onAdd: () => openForm(null),
     onEdit: (row) => openForm(row),
     onDelete: (row) => remove(row),
