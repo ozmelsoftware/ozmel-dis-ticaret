@@ -1,47 +1,39 @@
-// Stok Durumu — v2 modülü (yeni ekran). Referans mantık: v78 viewStok.
-// İki bölüm:
-//   1) Hammadde Stok Durumu — onaylı gelen − tüketilen (kesim) = net stok (kg + adet eşd.)
-//   2) Sipariş Bazında Üretim Akışı (WIP) — seçili siparişin rota sırasına göre aşama zinciri
+// Stok — v2 modülü (v81 yeniden tasarım). Referans: viewStok + viewStokHammaddeSade +
+// viewStokYariMamul + hammaddeStokBilgisiByKod + acikSiparislerIcinGerekliKalan (BİREBİR).
+// Eski sipariş-seçmeli WIP zaman çizgisi KALDIRILDI — ekran kategori sekmeli ve sade.
 //
-// SALT görüntüleme (form yok). Veri istemcide türetilir (listAll — yeni BE ucu yok):
-//   onaylı gelen  = purchase_receipts, YALNIZCA incoming_inspections.overall_result='Uygun' olanlar
-//                   (birim hammaddenin kendi birimi = kg kabul edilir)
-//   tüketilen     = kesim operasyonundaki production toplamı × ürün ağacı çarpanı × hammadde ağırlığı
-//   bağlı sipariş = purchase_requests.order_id → orders.order_no
-//   WIP aşaması   = sipariş → ürün → routes(sequence) → o operasyonda üretilen production toplamı
+// 3 sekme: Hammadde / Satınalınan Malzeme / Yarı Mamül (kategori ağaçtan türetilir — core/bom.js).
+//   Hammadde/Satınalınan: Kod | Açıklama | Mevcut Stok | Açık Siparişler İçin Gerekli | Kalan
+//     (satır açılınca açık sipariş kırılımı). Mevcut = onaylı gelen − tüketilen (malzemenin birimi).
+//   Yarı Mamül: Kod | Üretilen (kendi siparişleri, son aşama) | Diğer Ürünlerin İhtiyacı | Kalan.
 //
-// VERİ GERÇEKLİĞİ (yedekten): 57 üründen tip='Hammadde' olanlar listelenir; yalnızca 14'ünde
-// materialWeight var → gerisinde kg↔adet çevrimi yapılamaz, "—" gösterilir (hata değil).
-// minStockLevel hiç girilmemiş → "Düşük Stok" uyarısı başta çıkmaz. Ürün ağacı bağlantısı
-// çözülemeyen hammaddede tüketilen "—" gösterilir (BOM seyrek — bkz. teslim raporu).
+// Tüketim: ürünün rotasındaki EN DÜŞÜK sıra adımının üretimi × BOM kümülatif çarpanı (referans:
+// Kesim adı eşleşmesi DEĞİL — TR/EN bağımsız). Gereklilik: core/bom.js urunHammaddeIhtiyaci.
 //
-// i18n: özel görünüm — bindLang render()'ı VERİ ÇEKMEDEN yeniden çağırır (seçili sipariş
-// closure'da korunur). Kod/ad/operasyon adları sunucudan geldiği gibi basılır.
+// Salt-okuma, form yok, yeni BE ucu yok (hepsi listAll). i18n: bindLang render()'ı VERİ
+// ÇEKMEDEN yeniden çağırır; kod/ad'lar sunucudan geldiği gibi basılır.
 
 import { resource } from '../core/api.js';
 import { errorState, esc } from '../core/states.js';
-import { loadLookup, mapNamed } from '../core/lookups.js';
+import { loadLookup } from '../core/lookups.js';
 import { t, bindLang } from '../core/i18n.js';
 import { fmtTr } from '../core/format.js';
+import { createBom } from '../core/bom.js';
 
-const mapProductFull = (r) => ({
-  id: r.id, code: r.code, name: r.name, type: r.type,
-  materialWeight: r.materialWeight, minStockLevel: r.minStockLevel, outgoingOperationId: r.outgoingOperationId,
-});
+const mapProductFull = (r) => ({ id: r.id, code: r.code, name: r.name, type: r.type, unit: r.unit });
 
-const CUT_RE = /kesim|cutting/i;   // kesim operasyonu ad eşleşmesi
+const S = { tab: 'hammadde', openRow: null };   // oturum boyu modül durumu
 
 export async function viewStok(container) {
   container.innerHTML = `<div class="loading">${t('common.loading')}</div>`;
 
-  let products, operations, trees, receipts, requests, inspections, orders, workOrders, routes, production;
+  let products, trees, orders, workOrders, routes, production, requests, receipts, inspections;
   try {
     const d = (n) => resource(n).listAll().then(r => r.data);
-    [products, operations, trees, receipts, requests, inspections, orders, workOrders, routes, production] = await Promise.all([
+    [products, trees, orders, workOrders, routes, production, requests, receipts, inspections] = await Promise.all([
       loadLookup('product-codes', mapProductFull),
-      loadLookup('operations', mapNamed),
-      d('product-trees'), d('purchase-receipts'), d('purchase-requests'), d('incoming-inspections'),
-      d('orders'), d('work-orders'), d('routes'), d('production'),
+      d('product-trees'), d('orders'), d('work-orders'), d('routes'), d('production'),
+      d('purchase-requests'), d('purchase-receipts'), d('incoming-inspections'),
     ]);
   } catch (err) {
     container.innerHTML = '';
@@ -49,231 +41,241 @@ export async function viewStok(container) {
     return;
   }
 
-  // — Ürün ağacı (BOM): hammadde id → Map(bitmiş ürün kodu id → çarpan) —
-  const nodeById = new Map(trees.map(n => [n.id, n]));
-  const rootProductOf = (n) => { let c = n, g = 0; while (c && c.parentId != null && nodeById.has(c.parentId) && g++ < 100) c = nodeById.get(c.parentId); return c; };
-  const multFromRoot = (n) => { let m = 1, c = n, g = 0; while (c && c.parentId != null && nodeById.has(c.parentId) && g++ < 100) { const q = Number(c.unitQuantity); m *= (q > 0 ? q : 1); c = nodeById.get(c.parentId); } return m; };
-  const rawToProducts = new Map();   // rawId → Map(finishedProductId → mult)
-  const addRaw = (rawId, F, m) => { if (rawId == null || F == null) return; if (!rawToProducts.has(rawId)) rawToProducts.set(rawId, new Map()); const mm = rawToProducts.get(rawId); mm.set(F, (mm.get(F) || 0) + m); };
-  for (const n of trees) {
-    const F = rootProductOf(n)?.productCodeId;
-    const m = multFromRoot(n);
-    if (n.materialCodeId != null) addRaw(n.materialCodeId, F, m);
-    // Hammadde tipindeki bir kod doğrudan ağaç düğümüyse (kök değilse) onu da say
-    if (n.parentId != null && products.byId.get(n.productCodeId)?.type === 'Hammadde') addRaw(n.productCodeId, F, m);
-  }
+  // — Kod ⇄ ürün id eşlemeleri —
+  const codeOf = (id) => products.byId.get(id)?.code || ('#' + id);
+  const prodByCode = new Map();
+  for (const p of products.rows) if (p.code) prodByCode.set(p.code, p);
+  const descOf = (code) => prodByCode.get(code)?.name || '';
+  const unitOf = (code) => (prodByCode.get(code)?.unit || '').toLowerCase();
 
-  // — Kesim operasyonu id'leri: ad eşleşmesi; yoksa hammadde "çıkan operasyon"u —
-  let cuttingOps = new Set(operations.rows.filter(o => CUT_RE.test(o.name || '')).map(o => o.id));
-  if (cuttingOps.size === 0) {
-    for (const p of products.rows) if (p.type === 'Hammadde' && p.outgoingOperationId != null) cuttingOps.add(p.outgoingOperationId);
-  }
+  const bom = createBom(trees, (n) => codeOf(n.productCodeId));
 
-  // — Bitmiş ürün başına kesim üretimi (adet) —
-  const woById = new Map(workOrders.map(w => [w.id, w]));
-  const orderById = new Map(orders.map(o => [o.id, o]));
-  const cutByProduct = new Map();
-  for (const p of production) {
-    const wo = woById.get(p.workOrderId); if (!wo || !cuttingOps.has(wo.operationId)) continue;
-    const ord = orderById.get(wo.orderId); if (!ord) continue;
-    cutByProduct.set(ord.productCodeId, (cutByProduct.get(ord.productCodeId) || 0) + (Number(p.actualQuantity) || 0));
-  }
+  // — Üretim: iş emri id → üretilen (actualQuantity toplamı) —
+  const producedByWo = new Map();
+  for (const p of production) producedByWo.set(p.workOrderId, (producedByWo.get(p.workOrderId) || 0) + (Number(p.actualQuantity) || 0));
+  const woProduced = (woId) => producedByWo.get(woId) || 0;
 
-  // — Onaylı gelen: incoming_inspections.overallResult='Uygun' olan girişler (Şartlı Kabul SAYILMAZ) —
+  // — Rota: ürün id → {min, max} sıra —
+  const seqByProduct = new Map();
+  for (const r of routes) {
+    if (r.sequence == null) continue;
+    const e = seqByProduct.get(r.productCodeId) || { min: Infinity, max: -Infinity };
+    e.min = Math.min(e.min, r.sequence); e.max = Math.max(e.max, r.sequence);
+    seqByProduct.set(r.productCodeId, e);
+  }
+  // ürün id + sıra → o adımda üretilen (asamaUretilen)
+  const stepProduced = (productId, seq) => workOrders.reduce((s, w) =>
+    (w.productCodeId === productId && w.sequence === seq) ? s + woProduced(w.id) : s, 0);
+  const orderStepProduced = (orderId, seq) => workOrders.reduce((s, w) =>
+    (w.orderId === orderId && w.sequence === seq) ? s + woProduced(w.id) : s, 0);
+
+  // — Onaylı gelen: incoming_inspections.overallResult='Uygun' → receipt → request —
   const approvedReceiptIds = new Set(inspections.filter(i => i.overallResult === 'Uygun' && i.purchaseReceiptId != null).map(i => i.purchaseReceiptId));
-  const reqById = new Map(requests.map(r => [r.id, r]));
-  const gelenByMat = new Map();
-  const ordersByMat = new Map();
+  const approvedByRequest = new Map();   // requestId → onaylı miktar toplamı
   for (const rc of receipts) {
-    if (!approvedReceiptIds.has(rc.id)) continue;
-    const req = reqById.get(rc.purchaseRequestId); if (!req || req.materialCodeId == null) continue;
-    const mat = req.materialCodeId;
-    gelenByMat.set(mat, (gelenByMat.get(mat) || 0) + (Number(rc.quantity) || 0));
-    if (req.orderId != null) { if (!ordersByMat.has(mat)) ordersByMat.set(mat, new Set()); ordersByMat.get(mat).add(req.orderId); }
+    if (!approvedReceiptIds.has(rc.id) || rc.purchaseRequestId == null) continue;
+    approvedByRequest.set(rc.purchaseRequestId, (approvedByRequest.get(rc.purchaseRequestId) || 0) + (Number(rc.quantity) || 0));
+  }
+  const orderById = new Map(orders.map(o => [o.id, o]));
+
+  // — Bir malzeme kodunun örnek yaprak düğümü → verim (h) —
+  function leafYield(code) {
+    const leaf = bom.nodes.find(n => n.code === code && bom.isLeaf(n.id));
+    return leaf ? bom.nodeYield(leaf) : null;
+  }
+  // birimDonusum — referans birebir
+  function birimDonusum(miktar, birim, h) {
+    const b = String(birim || '').toLowerCase().trim();
+    if (!h) return { kg: 0, adet: miktar };
+    if (b.includes('kg')) return { kg: miktar, adet: h.parcaAgirligi > 0 ? miktar / h.parcaAgirligi : 0 };
+    if (b.includes('tüp') || b.includes('tup') || b.includes('boru')) return { kg: miktar * h.materialWeight, adet: miktar * h.parcaAdedi };
+    return { kg: miktar * h.parcaAgirligi, adet: miktar };
   }
 
-  // — Her hammadde için satır verisi —
-  function buildRawRows() {
-    return products.rows.filter(p => p.type === 'Hammadde').sort((a, b) => (a.code || '').localeCompare(b.code || '', 'tr')).map(H => {
-      const W = Number(H.materialWeight) > 0 ? Number(H.materialWeight) : null;
-      const gelenKg = gelenByMat.get(H.id) || 0;
-      const fmap = rawToProducts.get(H.id);
-      const bomLinked = !!(fmap && fmap.size);
-      let tuketilenAdet = null;
-      if (bomLinked) { tuketilenAdet = 0; for (const [F, mult] of fmap) tuketilenAdet += (cutByProduct.get(F) || 0) * mult; }
-      const tuketilenKg = (tuketilenAdet != null && W) ? tuketilenAdet * W : null;
-      let netKg = null;
-      if (tuketilenKg != null) netKg = gelenKg - tuketilenKg;
-      else if (!bomLinked) netKg = gelenKg;                       // bilinen tüketim yok
-      // (bomLinked ama ağırlık yoksa netKg kg cinsinden hesaplanamaz → null)
-      const urunler = bomLinked ? [...fmap.keys()].map(F => products.byId.get(F)?.code).filter(Boolean) : [];
-      const orderIds = [...(ordersByMat.get(H.id) || [])];
-      const minStok = H.minStockLevel != null && H.minStockLevel !== '' ? Number(H.minStockLevel) : null;
-      let durum = null;   // { text, cls, min }
-      if (netKg != null) {
-        if (netKg < 0) durum = { key: 'stok.negative', cls: 'danger', min: minStok };
-        else if (minStok != null && netKg < minStok) durum = { key: 'stok.low', cls: 'warning', min: minStok };
-      }
-      return { H, W, gelenKg, tuketilenAdet, tuketilenKg, netKg, urunler, orderIds, durum };
-    });
+  // — hammaddeStokBilgisiByKod (referans birebir) —
+  function stokByCode(code) {
+    const matId = prodByCode.get(code)?.id;
+    const h = leafYield(code);
+    let gelenKg = 0, gelenAdet = 0;
+    const bagliSiparisler = new Set();
+    for (const req of requests) {
+      if (req.materialCodeId !== matId) continue;
+      const onaylanan = approvedByRequest.get(req.id) || 0;
+      const dd = birimDonusum(onaylanan, req.unit, h);
+      gelenKg += dd.kg; gelenAdet += dd.adet;
+      if (req.orderId != null) { const o = orderById.get(req.orderId); if (o) bagliSiparisler.add(o.orderNo); }
+    }
+    // Bu malzemeyi kullanan tüm KÖK ürünler; her kökün ilk-sıra üretimi × kümülatif çarpan
+    const kullananKokler = new Map();   // rootProductId → root code
+    for (const n of bom.nodes) {
+      if (n.code !== code) continue;
+      let cur = n, guard = 0;
+      while (cur && cur.parentId != null && bom.byId.has(cur.parentId) && guard++ < 100) cur = bom.byId.get(cur.parentId);
+      if (cur) kullananKokler.set(cur.id, cur.code);   // cur.id = tree node id (kök); kodundan ürün id'si ayrı
+    }
+    let tuketilenAdet = 0;
+    for (const [, kokCode] of kullananKokler) {
+      const rootProductId = prodByCode.get(kokCode)?.id;
+      if (rootProductId == null) continue;
+      const rootNode = bom.nodes.find(n => n.code === kokCode && n.parentId == null);
+      if (!rootNode) continue;
+      const carpan = bom.collectLeaves(rootNode.id).filter(y => y.node.code === code).reduce((s, y) => s + y.cumUnit, 0);
+      const seq = seqByProduct.get(rootProductId);
+      if (!seq || seq.min === Infinity) continue;
+      const uretilen = stepProduced(rootProductId, seq.min);
+      tuketilenAdet += uretilen * carpan;
+    }
+    const tuketilenKg = h ? tuketilenAdet * h.parcaAgirligi : 0;
+    const yuv = (n) => Math.round(n * 1000) / 1000;
+    return {
+      code, gelenKg: yuv(gelenKg), gelenAdet: Math.round(gelenAdet),
+      tuketilenKg: yuv(tuketilenKg), tuketilenAdet: Math.round(tuketilenAdet),
+      netKg: yuv(gelenKg - tuketilenKg), netAdet: Math.round(gelenAdet - tuketilenAdet),
+      bagliSiparisler: [...bagliSiparisler],
+    };
   }
 
-  // — WIP: seçili siparişin aşama zinciri —
-  let selectedOrderId = orders[0]?.id ?? null;
-
-  function stagesFor(order) {
-    if (!order) return [];
-    const steps = routes.filter(r => r.productCodeId === order.productCodeId);
-    const bySeq = new Map();   // sequence → operationId (ilk rota)
-    for (const r of steps) if (!bySeq.has(r.sequence)) bySeq.set(r.sequence, r.operationId);
-    const seqList = [...bySeq.entries()].sort((a, b) => a[0] - b[0]);
-    const produced = (opId) => production.reduce((s, p) => {
-      const wo = woById.get(p.workOrderId);
-      return (wo && wo.orderId === order.id && wo.operationId === opId) ? s + (Number(p.actualQuantity) || 0) : s;
-    }, 0);
-    const rows = seqList.map(([seq, opId], i) => ({
-      sira: i + 1, ad: operations.byId.get(opId)?.name || ('#' + opId), uretilen: produced(opId),
-    }));
-    return rows.map((r, i) => {
-      const next = rows[i + 1];
-      const aktarilan = next ? next.uretilen : 0;
-      const stok = r.uretilen - aktarilan;
-      const son = i === rows.length - 1;
-      return { ...r, aktarilan, stok, son, ilk: i === 0 };
-    });
+  // — acikSiparislerIcinGerekliKalan (referans birebir) —
+  function gerekliKalan(code) {
+    const kgBazli = unitOf(code) === 'kg';
+    let toplam = 0;
+    const detay = [];
+    for (const order of orders) {
+      if (order.status === 'Tamamlandı') continue;
+      const urunKod = codeOf(order.productCodeId);
+      const liste = bom.requirement(urunKod, order.targetQuantity);
+      const kayit = liste.find(l => l.code === code);
+      if (!kayit) continue;
+      const tamGerekli = kgBazli ? (kayit.toplamAgirlik ?? kayit.gerekliParca) : kayit.gerekliParca;
+      if (!tamGerekli) continue;
+      const seq = seqByProduct.get(order.productCodeId);
+      if (!seq || seq.min === Infinity) continue;
+      const uretilenBu = orderStepProduced(order.id, seq.min);
+      const oran = tamGerekli / order.targetQuantity;
+      const tuketilenBu = uretilenBu * oran;
+      const kalan = Math.max(0, tamGerekli - tuketilenBu);
+      if (kalan > 0.0001) { toplam += kalan; detay.push({ orderId: order.id, orderNo: order.orderNo, kalan: Math.round(kalan * 100) / 100 }); }
+    }
+    return { toplam: Math.round(toplam * 100) / 100, detay };
   }
 
   render();
   bindLang(container, render);
 
   function render() {
-    const rawRows = buildRawRows();
-    const kg = (v) => fmtTr(Math.round(Number(v))) + ' ' + t('stok.kg');
-    const adet = (v, suffix) => fmtTr(Math.round(Number(v))) + ' ' + suffix;
+    const kategoriler = bom.codesByCategory();
+    if (trees.length === 0) {
+      container.innerHTML = headHTML() + emptyBox(t('stok.emptyNoTree'), t('stok.emptyNoTreeHint'));
+      return;
+    }
+    const tabBar = `
+      <div class="panel"><div class="panel-body" style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${tabBtn('hammadde', t('stok.tabRaw'), kategoriler['Hammadde'].length)}
+        ${tabBtn('satinalinan', t('stok.tabBought'), kategoriler['Satınalınan Malzeme'].length)}
+        ${tabBtn('yarimamul', t('stok.tabSemi'), kategoriler['Yarı Mamül'].length)}
+      </div></div>`;
+    const bodyHTML = S.tab === 'yarimamul'
+      ? renderYariMamul(kategoriler['Yarı Mamül'])
+      : renderHammadde(kategoriler[S.tab === 'hammadde' ? 'Hammadde' : 'Satınalınan Malzeme']);
 
-    const rawTable = rawRows.map(r => {
-      const H = r.H;
-      const codeLink = `<a class="xlink mono" href="#product-codes?id=${H.id}">${esc(H.code || '')}</a>`;
-      const gelenAdet = r.W ? adet(r.gelenKg / r.W, t('stok.pieceEq')) : '—';
-      const tukKg = r.tuketilenKg != null ? kg(r.tuketilenKg) : '—';
-      const tukAdet = r.tuketilenAdet != null ? adet(r.tuketilenAdet, t('stok.piece')) : '—';
-      const netStr = r.netKg != null ? kg(r.netKg) : '—';
-      const netAdet = (r.netKg != null && r.W) ? adet(r.netKg / r.W, t('stok.pieceEq')) : '—';
-      const netColor = r.netKg != null ? (r.netKg < 0 ? 'var(--color-danger)' : 'var(--color-success)') : 'var(--color-neutral-500)';
-      const durumHTML = r.durum
-        ? `<span class="stok-badge stok-badge-${r.durum.cls}"${r.durum.min != null ? ` title="${esc(t('stok.minLevel', { n: fmtTr(r.durum.min) }))}"` : ''}>${esc(t(r.durum.key))}</span>`
-        : '';
-      const orders_ = r.orderIds.length
-        ? r.orderIds.map(oid => `<a class="xlink" href="#orders?id=${oid}">${esc(orderById.get(oid)?.orderNo || ('#' + oid))}</a>`).join(', ')
-        : `<span class="text-muted">${esc(t('stok.generalStock'))}</span>`;
+    container.innerHTML = headHTML() + tabBar + bodyHTML;
+    bindEvents();
+  }
+
+  function headHTML() {
+    return `
+      <div class="module-head"><div>
+        <h2>${esc(t('menu.stok'))}</h2>
+        <div class="text-muted" style="font-size:13.5px; margin-top:6px;">${esc(t('stok.subtitle'))}</div>
+      </div></div>`;
+  }
+
+  function tabBtn(id, label, n) {
+    return `<button class="btn btn-sm ${S.tab === id ? 'btn-primary' : 'btn-ghost'}" data-tab="${id}">${esc(label)} (${n})</button>`;
+  }
+
+  // Hammadde / Satınalınan (ortak tablo) — viewStokHammaddeSade
+  function renderHammadde(codes) {
+    if (!codes.length) return `<div class="panel"><div class="panel-body text-muted" style="padding:18px;">${esc(t('stok.emptyCat'))}</div></div>`;
+    const rows = codes.map(code => {
+      const bilgi = stokByCode(code);
+      const kgBazli = unitOf(code) === 'kg';
+      const birim = kgBazli ? t('stok.kg') : t('stok.piece');
+      const mevcut = kgBazli ? bilgi.netKg : bilgi.netAdet;
+      const gerekli = gerekliKalan(code);
+      const kalan = Math.round((mevcut - gerekli.toplam) * 100) / 100;
+      const acik = S.openRow === code;
+      const expandable = gerekli.detay.length > 0;
+      const kalanColor = kalan < 0 ? 'var(--color-danger)' : 'var(--color-success)';
+      const detayHTML = (acik && expandable) ? `
+        <tr><td colspan="5" style="background:var(--color-surface-2, var(--color-neutral-100)); padding:10px 20px;">
+          ${gerekli.detay.map(dt => `<div style="display:flex;justify-content:space-between;max-width:320px;padding:3px 0;font-size:13px;">
+            <a class="xlink mono" href="#orders?id=${dt.orderId}">${esc(dt.orderNo || '')}</a>
+            <span class="mono">${esc(fmtTr(dt.kalan))} ${esc(birim)}</span>
+          </div>`).join('')}
+        </td></tr>` : '';
+      return `
+        <tr${expandable ? ` class="stok-expandable" data-row="${esc(code)}" style="cursor:pointer;"` : ''}>
+          <td class="mono"><b>${esc(code)}</b></td>
+          <td>${esc(descOf(code))}</td>
+          <td class="mono" style="text-align:right;">${esc(fmtTr(mevcut))} ${esc(birim)}</td>
+          <td class="mono" style="text-align:right;">${gerekli.toplam > 0 ? esc(fmtTr(gerekli.toplam) + ' ' + birim) : '<span class="text-muted">—</span>'} ${expandable ? `<span class="text-muted">${acik ? '▾' : '▸'}</span>` : ''}</td>
+          <td class="mono" style="text-align:right;"><b style="color:${kalanColor};">${esc(fmtTr(kalan))} ${esc(birim)}</b></td>
+        </tr>${detayHTML}`;
+    }).join('');
+    return `
+      <div class="panel"><div class="table-wrap" style="overflow-x:auto;"><table class="table">
+        <thead><tr>
+          <th>${esc(t('stok.colCode'))}</th><th>${esc(t('stok.colDesc'))}</th>
+          <th style="text-align:right;">${esc(t('stok.colCurrent'))}</th>
+          <th style="text-align:right;">${esc(t('stok.colNeeded'))}</th>
+          <th style="text-align:right;">${esc(t('stok.colRemain'))}</th>
+        </tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }
+
+  // Yarı Mamül — viewStokYariMamul
+  function renderYariMamul(codes) {
+    if (!codes.length) return `<div class="panel"><div class="panel-body text-muted" style="padding:18px;">${esc(t('stok.emptySemi'))}</div></div>`;
+    const rows = codes.map(code => {
+      const productId = prodByCode.get(code)?.id;
+      const seq = productId != null ? seqByProduct.get(productId) : null;
+      const sonSira = seq && seq.max !== -Infinity ? seq.max : null;
+      let uretilen = 0;
+      if (sonSira != null) for (const o of orders) if (o.productCodeId === productId && o.status !== 'Tamamlandı') uretilen += orderStepProduced(o.id, sonSira);
+      const gerekli = gerekliKalan(code);
+      const kalan = Math.round((uretilen - gerekli.toplam) * 100) / 100;
+      const kalanColor = kalan < 0 ? 'var(--color-danger)' : 'var(--color-success)';
+      const piece = t('stok.piece');
       return `
         <tr>
-          <td class="stok-c-prod">
-            <div class="mono stok-ellip">${r.urunler.length ? r.urunler.map(esc).join(', ') : '—'}</div>
-            <div class="stok-sub stok-ellip">${esc(H.name || '')}</div>
-          </td>
-          <td>${codeLink}</td>
-          <td class="stok-num"><div class="mono">${esc(kg(r.gelenKg))}</div><div class="stok-sub">${esc(gelenAdet)}</div></td>
-          <td class="stok-num"><div class="mono">${esc(tukKg)}</div><div class="stok-sub">${esc(tukAdet)}</div></td>
-          <td class="stok-num"><div class="mono" style="font-weight:500; color:${netColor};">${esc(netStr)}</div><div class="stok-sub">${esc(netAdet)}</div></td>
-          <td>${durumHTML}</td>
-          <td class="stok-orders">${orders_}</td>
+          <td class="mono"><b>${esc(code)}</b></td>
+          <td class="mono" style="text-align:right;">${esc(fmtTr(uretilen))} ${esc(piece)}</td>
+          <td class="mono" style="text-align:right;">${gerekli.toplam > 0 ? esc(fmtTr(gerekli.toplam) + ' ' + piece) : '<span class="text-muted">—</span>'}</td>
+          <td class="mono" style="text-align:right;"><b style="color:${kalanColor};">${esc(fmtTr(kalan))} ${esc(piece)}</b></td>
         </tr>`;
     }).join('');
+    return `
+      <div class="panel"><div class="panel-body text-muted" style="font-size:12.5px;">${esc(t('stok.semiHint'))}</div>
+        <div class="table-wrap" style="overflow-x:auto;"><table class="table">
+          <thead><tr>
+            <th>${esc(t('stok.colCode'))}</th>
+            <th style="text-align:right;">${esc(t('stok.colSemiProduced'))}</th>
+            <th style="text-align:right;">${esc(t('stok.colSemiNeeded'))}</th>
+            <th style="text-align:right;">${esc(t('stok.colRemain'))}</th>
+          </tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }
 
-    const rawSection = `
-      <div class="panel stok-panel">
-        <div class="stok-panel-head">
-          <div class="stok-panel-title">${esc(t('stok.rawTitle'))}</div>
-          <div class="stok-panel-sub">${esc(t('stok.rawSubtitle'))}</div>
-        </div>
-        <div class="stok-tablewrap">
-          <table class="stok-table">
-            <thead><tr>
-              <th class="stok-c-prod">${esc(t('stok.colProduct'))}</th>
-              <th>${esc(t('stok.colMaterial'))}</th>
-              <th class="stok-num">${esc(t('stok.colIncoming'))}</th>
-              <th class="stok-num">${esc(t('stok.colConsumed'))}</th>
-              <th class="stok-num">${esc(t('stok.colNet'))}</th>
-              <th>${esc(t('stok.colStatus'))}</th>
-              <th>${esc(t('stok.colOrders'))}</th>
-            </tr></thead>
-            <tbody>${rawRows.length ? rawTable : `<tr><td colspan="7" class="text-muted" style="padding:18px;">${esc(t('stok.noRaw'))}</td></tr>`}</tbody>
-          </table>
-        </div>
-      </div>`;
+  function emptyBox(title, hint) {
+    return `<div class="panel"><div class="panel-body" style="text-align:center;padding:48px 24px;">
+      <div style="font-size:18px;font-weight:600;">${esc(title)}</div>
+      <div class="text-muted" style="margin-top:8px;font-size:14px;">${esc(hint)}</div></div></div>`;
+  }
 
-    // — WIP —
-    let wipSection = '';
-    if (orders.length) {
-      if (selectedOrderId == null || !orderById.has(selectedOrderId)) selectedOrderId = orders[0].id;
-      const order = orderById.get(selectedOrderId);
-      const ordersList = orders.map(o => {
-        const on = o.id === selectedOrderId;
-        return `
-          <div class="stok-ord${on ? ' on' : ''}" data-oid="${o.id}">
-            <div class="mono stok-ord-no">${esc(o.orderNo || '')}</div>
-            <div class="stok-ord-meta">${esc((products.byId.get(o.productCodeId)?.code || '') + ' · ' + fmtTr(o.targetQuantity) + ' ' + t('stok.piece'))}</div>
-          </div>`;
-      }).join('');
-
-      const stages = stagesFor(order);
-      const stagesHTML = stages.length ? stages.map(s => {
-        const dolu = s.stok > 0;
-        const numColor = dolu ? 'var(--color-accent-700)' : 'var(--color-neutral-400)';
-        const numBg = dolu ? 'var(--color-accent)' : 'var(--color-surface)';
-        const numInk = dolu ? '#fff' : 'var(--color-neutral-700)';
-        const stokColor = s.stok < 0 ? 'var(--color-danger)' : 'var(--color-success)';
-        return `
-          <div class="stok-stage">
-            <div class="stok-stage-mark">
-              <div class="stok-stage-num" style="border-color:${numColor}; background:${numBg}; color:${numInk};">${s.sira}</div>
-              <div class="stok-stage-line" style="${s.son ? 'background:transparent;' : ''}"></div>
-            </div>
-            <div class="stok-stage-body">
-              <div class="stok-stage-titlerow">
-                <span class="stok-stage-name">${esc(s.ad)}</span>
-                ${s.ilk ? `<span class="stok-stage-note">${esc(t('stok.rawSeeTable'))}</span>` : ''}
-              </div>
-              <div class="stok-stage-nums">
-                <div><div class="stok-stage-lbl">${esc(t('stok.stageProduced'))}</div><div class="mono stok-stage-val">${esc(fmtTr(s.uretilen))}</div></div>
-                <div><div class="stok-stage-lbl">${esc(s.son ? t('stok.stageConsumeLast') : t('stok.stageTransferred'))}</div><div class="mono stok-stage-val">${esc(fmtTr(s.aktarilan))}</div></div>
-                <div><div class="stok-stage-lbl">${esc(s.son ? t('stok.stageFinished') : t('stok.stageWip'))}</div><div class="mono stok-stage-val" style="font-weight:500; color:${stokColor};">${esc(fmtTr(s.stok))}</div></div>
-              </div>
-            </div>
-          </div>`;
-      }).join('') : `<div class="text-muted" style="padding:16px 0;">${esc(t('stok.noRoute'))}</div>`;
-
-      wipSection = `
-        <div class="stok-wip-label">${esc(t('stok.wipTitle'))}</div>
-        <div class="stok-wip">
-          <div class="panel stok-ordlist">
-            <div class="stok-ordlist-head">${esc(t('stok.ordersHead'))}</div>
-            <div class="stok-ordlist-body">${ordersList}</div>
-          </div>
-          <div class="panel stok-stages">
-            <div class="stok-stages-head">
-              <span class="mono stok-stages-code">${esc(products.byId.get(order.productCodeId)?.code || '')}</span>
-              <span class="stok-stages-sub">${esc((products.byId.get(order.productCodeId)?.name || '') + ' — ' + (order.orderNo || ''))}</span>
-            </div>
-            <div class="stok-stages-body">${stagesHTML}</div>
-          </div>
-        </div>`;
-    }
-
-    container.innerHTML = `
-      <div class="module-head">
-        <div>
-          <h2>${esc(t('menu.stok'))}</h2>
-          <div class="text-muted" style="font-size:13.5px; margin-top:6px;">${esc(t('stok.subtitle'))}</div>
-        </div>
-      </div>
-      ${rawSection}
-      ${wipSection}
-    `;
-
-    // sipariş seçimi (WIP)
-    container.querySelectorAll('.stok-ord').forEach(el =>
-      el.addEventListener('click', () => { selectedOrderId = Number(el.dataset.oid); render(); }));
+  function bindEvents() {
+    container.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { S.tab = b.dataset.tab; S.openRow = null; render(); }));
+    container.querySelectorAll('.stok-expandable').forEach(tr => tr.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;   // sipariş bağlantısına tıklama satırı açmasın
+      const code = tr.dataset.row; S.openRow = S.openRow === code ? null : code; render();
+    }));
   }
 }

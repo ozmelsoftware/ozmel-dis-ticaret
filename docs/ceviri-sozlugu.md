@@ -820,3 +820,26 @@ Operatörler ekranı iki sekme (`localStorage: ozmel.opr.tab`): **Operatör List
 | ka.excRemoveBody | Bu tarih analize yeniden dahil edilsin mi? | Include this date in the analysis again? |
 | ka.excRemoveConfirm | Dahil et | Include |
 | ka.excRemoved | {d} analize dahil edildi | {d} included in analysis |
+
+### Stok (v81 yeniden tasarım)
+
+| Anahtar | Türkçe | English |
+|---|---|---|
+| stok.subtitle | Malzeme kategorisine göre mevcut stok, açık siparişler için gereken ve kalan miktar | Current stock by material category, required for open orders, and remaining |
+| stok.kg | kg | kg |
+| stok.piece | adet | pcs |
+| stok.emptyNoTree | Henüz Ürün Ağacı tanımlı değil | No Product Tree defined yet |
+| stok.emptyNoTreeHint | Stok görmek için önce Ürün Ağaçları modülünden ürün/hammadde ilişkisi girilmeli. | To see stock, first enter product/material relations in the Product Trees module. |
+| stok.tabRaw | Hammadde | Raw Material |
+| stok.tabBought | Satınalınan Malzemeler | Bought Materials |
+| stok.tabSemi | Yarı Mamül | Semi-Finished |
+| stok.emptyCat | Bu kategoride malzeme yok | No materials in this category |
+| stok.colCode | Kod | Code |
+| stok.colDesc | Açıklama | Description |
+| stok.colCurrent | Mevcut Stok | Current Stock |
+| stok.colNeeded | Açık Siparişler İçin Gerekli | Required for Open Orders |
+| stok.colRemain | Kalan | Remaining |
+| stok.emptySemi | Yarı mamül olarak işaretli ürün yok | No products marked as semi-finished |
+| stok.semiHint | Kendi siparişlerinde üretilmiş ama henüz başka ürüne aktarılmamış miktar — Ürün Ağacı'nda başka ürünlerin girdisi olan ürünler | Produced in its own orders but not yet transferred to another product — products used as inputs of other products in the Product Tree |
+| stok.colSemiProduced | Üretilen (Kendi Siparişleri) | Produced (Own Orders) |
+| stok.colSemiNeeded | Diğer Ürünlerin İhtiyacı | Other Products' Need |
