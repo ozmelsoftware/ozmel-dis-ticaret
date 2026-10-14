@@ -191,7 +191,7 @@ export async function viewStok(container) {
   }
 
   function tabBtn(id, label, n) {
-    return `<button class="btn btn-sm ${S.tab === id ? 'btn-primary' : 'btn-ghost'}" data-tab="${id}">${esc(label)} (${n})</button>`;
+    return `<button class="btn ${S.tab === id ? 'btn-primary' : 'btn-ghost'}" data-tab="${id}">${esc(label)} (${n})</button>`;
   }
 
   // Hammadde / Satınalınan (ortak tablo) — viewStokHammaddeSade
