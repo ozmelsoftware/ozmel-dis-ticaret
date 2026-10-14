@@ -15,9 +15,17 @@ aynı olacak) → `docs/design-promptlari-v81.md`.
 
 ## Özet — eklenecek ekranlar (öncelik sırasıyla)
 
+> NOT: Bu tablonun ilk sürümü v78→v81 **farkıydı**. Referans ↔ staging tam nav karşılaştırması
+> yapıldı: referansın 26 modülünden biri (**Parça Yönetimi** / viewParts) bizde yok — ama bu
+> **kazara değil, kapsam kararıyla**. `docs/tutarlilik-raporu.md` Bölüm E: `parts` (gerçek veride
+> 0 kayıt), `qfw`, `dimwork`, `milestones` ve v78 `viewParts`/`viewQfw`/`viewDimwork` **brief gereği
+> kapsam dışı — eksik SAYILMAZ**. Yani **kazara eksik ekran yok**; aşağıdakiler mevcut ekranların
+> v81'e güncellenmesidir.
+
 | # | Ekran | Staging bugün | Yapılacak | Design |
 |---|---|---|---|---|
-| 1 | **Kapasite Analizi** | yok (modül/menü/route yok) | yeni modül | **yeni prompt** |
+| — | ~~Parça Yönetimi (viewParts)~~ | yok | **KAPSAM DIŞI** (brief kararı, tutarlilik-raporu §E) — yapılmayacak | — |
+| 1 | **Kapasite Analizi** | ✅ YAPILDI (migration 045 + modül) | — | — |
 | 2 | **Stok** | eski tasarım (`stok.js` = v78 viewStok: sipariş-seçmeli WIP) | tümden yeniden yaz | **yeni prompt** |
 | 3 | **Satış Raporları — Pano (TV)** | sadece liste var (`salesReports.js`) | liste/pano görünüm anahtarı + pano | **yeni prompt** |
 | 4 | **Giriş Kalite** | `incomingInspections.js` (Excel/kapsama yok) | Excel'e aktar + "kapsadığı girişler" + adet uyarısı | mevcut ekrana delta |
