@@ -126,6 +126,7 @@ export async function viewKapasiteAnalizi(container) {
   }
 
   const prodLabel = (id) => products.label(id);
+  const prodCode = (id) => { const r = products.byId.get(id); return r && r.code ? r.code : ('#' + id); };   // ÜRÜN sütunu: referans gibi sadece kod
   const opLabel = (id) => id == null ? '—' : operations.label(id);
   const wcLabel = (id) => id == null ? '—' : centers.label(id);
   const farkRenk = (p) => p === null ? 'var(--ink)' : Math.abs(p) <= 10 ? 'var(--good)' : p < 0 ? 'var(--flag)' : 'var(--accent)';
@@ -142,7 +143,7 @@ export async function viewKapasiteAnalizi(container) {
     const hedef = row.oneri.hedef;
     const ok = await confirmDialog({
       title: t('ka.applyTitle'),
-      body: t('ka.applyBody', { urun: prodLabel(row.productCodeId), makine: wcLabel(row.workCenterId), n: fmtTr(hedef) })
+      body: t('ka.applyBody', { urun: prodCode(row.productCodeId), makine: wcLabel(row.workCenterId), n: fmtTr(hedef) })
         + (row.paylasimYuzde >= 30 ? '\n\n' + t('ka.applyShareWarn', { p: Math.round(row.paylasimYuzde) }) : ''),
       confirmLabel: t('ka.applyConfirm'),
     });
@@ -287,7 +288,7 @@ export async function viewKapasiteAnalizi(container) {
     const body = satirlar.length === 0
       ? `<tr><td colspan="12" style="text-align:center;color:var(--ink-faint);padding:20px;">${esc(t('ka.noMatch'))}</td></tr>`
       : satirlar.map((s, i) => `<tr>
-          <td class="mono"><b>${esc(prodLabel(s.productCodeId))}</b></td>
+          <td class="mono"><b>${esc(prodCode(s.productCodeId))}</b></td>
           <td>${esc(opLabel(s.operationId))}</td>
           <td>${esc(wcLabel(s.workCenterId))}</td>
           <td class="mono">${s.gun}<div class="field-hint">${t('ka.nRecords', { n: s.kayit })}</div></td>
@@ -302,7 +303,7 @@ export async function viewKapasiteAnalizi(container) {
         </tr>`).join('');
 
     return `<div class="panel"><div class="panel-head"><h3>${esc(t('ka.modeAll'))}</h3><span class="field-hint">${t('ka.rowCount', { n: satirlar.length })}</span></div>
-      <div class="table-wrap"><table class="table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div></div>`;
+      <div class="table-wrap" style="overflow-x:auto;"><table class="table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div></div>`;
   }
 
   function renderMatris(tumKayit) {
@@ -327,7 +328,7 @@ export async function viewKapasiteAnalizi(container) {
       : satirlar.map(s => {
         const tanimli = tanimliGunluk(s.productCodeId, s.workCenterId, s.operationId);
         return `<tr>
-          <td class="mono"><b>${esc(prodLabel(s.productCodeId))}</b></td><td>${esc(opLabel(s.operationId))}</td><td>${esc(wcLabel(s.workCenterId))}</td>
+          <td class="mono"><b>${esc(prodCode(s.productCodeId))}</b></td><td>${esc(opLabel(s.operationId))}</td><td>${esc(wcLabel(s.workCenterId))}</td>
           <td class="mono" style="text-align:right;">${tanimli != null ? kn(tanimli) : '<span class="field-hint">—</span>'}</td>
           ${donemler.map(d => {
           const m = s.donemler[d];
@@ -341,14 +342,14 @@ export async function viewKapasiteAnalizi(container) {
 
     return `<div class="panel"><div class="panel-head"><h3>${esc(baslik)} — ${esc(degerAd)}</h3>
       <span class="field-hint">${esc(haftalik ? t('ka.weeklyHint') : t('ka.monthlyHint'))}</span></div>
-      <div class="table-wrap"><table class="table"><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
+      <div class="table-wrap" style="overflow-x:auto;"><table class="table"><thead>${head}</thead><tbody>${body}</tbody></table></div></div>`;
   }
 
   function renderHaric(A, katilanKayit, gunSayisi, toplamHaricTarih) {
     const liste = [...exclusions].sort((a, b) => b.date.localeCompare(a.date));
     const satirlar = liste.length === 0
       ? `<div class="field-hint">${esc(t('ka.noExclusions'))}</div>`
-      : `<div class="table-wrap"><table class="table">
+      : `<div class="table-wrap" style="overflow-x:auto;"><table class="table">
           <thead><tr><th>${esc(t('ka.colDate'))}</th><th style="text-align:right;">${esc(t('ka.colRecords'))}</th><th style="text-align:right;">${esc(t('ka.colQty'))}</th><th>${esc(t('ka.colNote'))}</th><th></th></tr></thead>
           <tbody>${liste.map(h => { const s = A.haric.tarih[h.date] || { n: 0, adet: 0 }; return `<tr>
             <td class="mono">${esc(fmtDateTR(h.date))}</td><td class="mono" style="text-align:right;">${s.n}</td><td class="mono" style="text-align:right;">${kn(s.adet)}</td>
@@ -380,7 +381,7 @@ export async function viewKapasiteAnalizi(container) {
     if (!S.sirala) return satirlar.sort((a, b) => b.adet - a.adet);
     const a = S.sirala, y = S.yon;
     const val = (x) => {
-      if (a === 'urun') return prodLabel(x.productCodeId);
+      if (a === 'urun') return prodCode(x.productCodeId);
       if (a === 'op') return opLabel(x.operationId);
       if (a === 'makine') return wcLabel(x.workCenterId);
       if (a === 'tanimli') return x.tanimli;
