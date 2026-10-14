@@ -25,6 +25,7 @@ const LABELS = {
     legend: 'Gri dolgulu ve kalın değer: tolerans dışı  ·  OK: uygun  ·  NOK: uygun değil',
     descTitle: 'Açıklama / İlave Bilgi',
     signInspector: 'Kontrol Eden (Ad Soyad / İmza)', signApprover: 'Kalite Sorumlusu / Onay (İmza)', date: 'Tarih',
+    footer: '&L&8Özmel Dış Ticaret — Giriş Kalite Kontrol Formu&C&8Sayfa &P / &N&R&8Yazdırma: &D',
   },
   en: {
     title: 'INCOMING QUALITY CONTROL FORM',
@@ -39,6 +40,7 @@ const LABELS = {
     legend: 'Grey & bold value: out of tolerance  ·  OK: pass  ·  NOK: fail',
     descTitle: 'Remarks / Additional Info',
     signInspector: 'Inspected By (Name / Signature)', signApprover: 'Quality Approver (Signature)', date: 'Date',
+    footer: '&L&8Özmel Dış Ticaret — Incoming Quality Control Form&C&8Page &P / &N&R&8Printed: &D',
   },
 };
 
@@ -84,7 +86,8 @@ async function excelDosyaIndir(wb, dosyaAdi) {
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
-// k normalize edilmiş kayıt, birim string, kapsananOzet string[]. İki dilli form üretir.
+// k normalize edilmiş kayıt, birim string, kapsananOzet string[]. İki AYRI SAYFA üretir:
+// "Giriş Kalite Kontrol" (TR) ve "Incoming Quality Control" (EN).
 function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
   const kar = k.karakteristikler || [];
   const toplamNumune = Math.max(k.ornekAdedi || 0, ...kar.map(x => (x.degerler || []).length), 1);
@@ -98,13 +101,10 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Özmel Dış Ticaret';
   wb.title = 'Giriş Kalite Kontrol Formu';
-  const ws = wb.addWorksheet('Giriş Kalite Kontrol', { views: [{ showGridLines: false }] });
-  genislikler.forEach((g, i) => { ws.getColumn(i + 1).width = g; });
 
   const ince = { style: 'thin', color: { argb: 'FF000000' } };
   const kenar = { top: ince, left: ince, bottom: ince, right: ince };
   const GRI = 'FFD9D9D9', ACIK = 'FFF2F2F2';
-  let r = 0;
 
   const toplamPx = 7 * toplamGenislik + 5 * T;
   const olcekDik = Math.min(1, 0.97 * 717 / toplamPx);
@@ -113,29 +113,7 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
   const olcekYuzde = Math.max(40, Math.floor(olcek * 100));
   const sayfaYuksekligi = dikey ? 841.9 : 595.3;
   const sayfaKapasitesi = ((sayfaYuksekligi - 1.1 * 72) / (olcekYuzde / 100)) * 0.99;
-  let kullanilan = 0;
-  const satirToplami = (a, b) => { let tt = 0; for (let i = a; i <= b; i++) tt += ws.getRow(i).height || 15; return tt; };
-  const sayfaKontrol = (bas) => {
-    const yuk = satirToplami(bas, r);
-    if (kullanilan > 0 && kullanilan + yuk > sayfaKapasitesi) { ws.getRow(bas - 1).addPageBreak(); kullanilan = yuk; }
-    else kullanilan += yuk;
-  };
 
-  const yaz = (satir, c1, c2, deger, o) => {
-    o = o || {};
-    if (c2 > c1) ws.mergeCells(satir, c1, satir, c2);
-    const bas = ws.getCell(satir, c1);
-    bas.value = (deger === undefined || deger === null) ? '' : deger;
-    for (let c = c1; c <= c2; c++) {
-      const hucre = ws.getCell(satir, c);
-      if (!o.sinirYok) hucre.border = kenar;
-      if (o.fill) hucre.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } };
-    }
-    bas.font = { name: 'Arial', size: o.size || 10, bold: !!o.bold, italic: !!o.italic, color: { argb: 'FF000000' } };
-    bas.alignment = { horizontal: o.align || 'left', vertical: o.valign || 'middle', wrapText: o.wrap !== false, indent: (o.align || 'left') === 'left' ? 1 : 0 };
-    if (o.numFmt) bas.numFmt = o.numFmt;
-  };
-  const bosSatir = (h) => { r++; ws.getRow(r).height = h; };
   const tarih = (x) => x ? fmtDateTR(x) : '';
 
   // Bilgi bloğu sütun bölümleri (iki dilde aynı yerleşim)
@@ -162,8 +140,31 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
     return { fail, dolu, hatali };
   };
 
-  // Tek dilli form bloğunu çizer (başlık → imza). r/kullanilan dış kapsamda ilerler.
-  function cizForm(L) {
+  // Verilen sayfaya (ws) tek dilli formu çizer. r/kullanilan sayfaya ÖZELdir.
+  function cizSayfa(ws, L) {
+    genislikler.forEach((g, i) => { ws.getColumn(i + 1).width = g; });
+    let r = 0, kullanilan = 0;
+    const satirToplami = (a, b) => { let tt = 0; for (let i = a; i <= b; i++) tt += ws.getRow(i).height || 15; return tt; };
+    const sayfaKontrol = (bas) => {
+      const yuk = satirToplami(bas, r);
+      if (kullanilan > 0 && kullanilan + yuk > sayfaKapasitesi) { ws.getRow(bas - 1).addPageBreak(); kullanilan = yuk; }
+      else kullanilan += yuk;
+    };
+    const yaz = (satir, c1, c2, deger, o) => {
+      o = o || {};
+      if (c2 > c1) ws.mergeCells(satir, c1, satir, c2);
+      const bas = ws.getCell(satir, c1);
+      bas.value = (deger === undefined || deger === null) ? '' : deger;
+      for (let c = c1; c <= c2; c++) {
+        const hucre = ws.getCell(satir, c);
+        if (!o.sinirYok) hucre.border = kenar;
+        if (o.fill) hucre.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } };
+      }
+      bas.font = { name: 'Arial', size: o.size || 10, bold: !!o.bold, italic: !!o.italic, color: { argb: 'FF000000' } };
+      bas.alignment = { horizontal: o.align || 'left', vertical: o.valign || 'middle', wrapText: o.wrap !== false, indent: (o.align || 'left') === 'left' ? 1 : 0 };
+      if (o.numFmt) bas.numFmt = o.numFmt;
+    };
+    const bosSatir = (h) => { r++; ws.getRow(r).height = h; };
     const formBas = r + 1;
     const olcuMetni = x => {
       if (!olcusel(x)) return L.visual;
@@ -285,22 +286,20 @@ function excelOlustur(ExcelJS, k, birim, kapsananOzet) {
     yaz(r, b2 + 1, T, '', {});
     ws.getRow(r).height = 42;
     sayfaKontrol(sonBirimBas);
+
+    // ---- Yazdırma ayarları (sayfaya özel) ----
+    ws.pageSetup = {
+      paperSize: 9, orientation: dikey ? 'portrait' : 'landscape',
+      fitToPage: false, scale: olcekYuzde, horizontalCentered: true,
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.6, header: 0.25, footer: 0.3 },
+      printArea: `A1:${excelSutunHarfi(T)}${r}`,
+    };
+    ws.headerFooter.oddFooter = L.footer;
   }
 
-  // Türkçe form, sonra YENİ SAYFADAN İngilizce form.
-  cizForm(LABELS.tr);
-  ws.getRow(r).addPageBreak();
-  kullanilan = 0;
-  cizForm(LABELS.en);
-
-  // ---- Yazdırma ayarları ----
-  ws.pageSetup = {
-    paperSize: 9, orientation: dikey ? 'portrait' : 'landscape',
-    fitToPage: false, scale: olcekYuzde, horizontalCentered: true,
-    margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.6, header: 0.25, footer: 0.3 },
-    printArea: `A1:${excelSutunHarfi(T)}${r}`,
-  };
-  ws.headerFooter.oddFooter = '&L&8Özmel Dış Ticaret — Giriş Kalite Kontrol Formu / Incoming Quality Control Form&C&8Sayfa / Page &P / &N&R&8&D';
+  // İki AYRI SAYFA: Türkçe + İngilizce.
+  cizSayfa(wb.addWorksheet('Giriş Kalite Kontrol', { views: [{ showGridLines: false }] }), LABELS.tr);
+  cizSayfa(wb.addWorksheet('Incoming Quality Control', { views: [{ showGridLines: false }] }), LABELS.en);
   return wb;
 }
 
